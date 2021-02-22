@@ -1,3 +1,5 @@
-/venv/
+/nginx/Makefile
+/nginx/objs/
 
+/venv/
 __pycache__/

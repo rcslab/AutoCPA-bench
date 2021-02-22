@@ -34,6 +34,21 @@ class MemcachedConfig:
     connections_per_thread: int
 
 @dataclass
+class NginxConfig:
+    """
+    nginx benchmark configuration.
+    """
+
+    config: str
+    prefix: str
+    server: str
+    client: str
+    client_threads: int
+    connections: int
+    duration: float
+
+
+@dataclass
 class Config:
     """
     bcpi_bench configuration (see cluster.conf).
@@ -41,6 +56,7 @@ class Config:
 
     servers: Dict[str, Server]
     memcached: MemcachedConfig
+    nginx: NginxConfig
 
     @classmethod
     def load(cls, file):
@@ -52,6 +68,7 @@ class Config:
             self.servers[key] = Server(**server)
 
         self.memcached = MemcachedConfig(**data["memcached"])
+        self.nginx = NginxConfig(**data["nginx"])
 
     def address(self, server):
         """
