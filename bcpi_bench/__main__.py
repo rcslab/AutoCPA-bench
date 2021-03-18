@@ -138,10 +138,10 @@ def nginx(ctx):
     server = conf.address(conf.nginx.server)
 
     logging.info(f"Syncing code to server {server}")
-    #spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
+    spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
 
     logging.info(f"Building code on {server}")
-    #ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12", "nginx"])
+    ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12", "nginx"])
 
     with ExitStack() as stack:
         # Set up the nginx working directory
