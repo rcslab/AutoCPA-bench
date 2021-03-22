@@ -60,6 +60,34 @@ def exec(ctx, server, command):
     ssh_spawn(address, command)
 
 
+def _sync_build(server, targets, sync=True, build=True):
+    """
+    Sync and build the code on a server.
+    """
+
+    if sync:
+        logging.info(f"Syncing code to server {server}")
+        spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
+
+    if build:
+        logging.info(f"Building code on {server}")
+        ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12"] + list(targets))
+
+
+@cli.command()
+@click.option("--sync/--no-sync", default=True, help="Sync the code to the server")
+@click.argument('server', nargs=1)
+@click.argument('targets', nargs=-1)
+@click.pass_context
+def build(ctx, sync, server, targets):
+    """
+    Build the code on a server.
+    """
+
+    conf = ctx.obj
+    _sync_build(conf.address(server), targets, sync=sync)
+
+
 @cli.command()
 @click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
 @click.option("--build/--no-build", default=True, help="Build the code on the servers")
@@ -72,13 +100,7 @@ def memcached(ctx, sync, build):
     conf = ctx.obj
     server = conf.address(conf.memcached.server)
 
-    if sync:
-        logging.info(f"Syncing code to server {server}")
-        spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
-
-    if build:
-        logging.info(f"Building code on {server}")
-        ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12", "memcached", "mutilate"])
+    _sync_build(server, ["memcached", "mutilate"], sync=sync, build=build)
 
     with ExitStack() as stack:
         logging.info(f"Starting memcached on {server}")
@@ -150,13 +172,7 @@ def nginx(ctx, sync, build):
     conf = ctx.obj
     server = conf.address(conf.nginx.server)
 
-    if sync:
-        logging.info(f"Syncing code to server {server}")
-        spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
-
-    if build:
-        logging.info(f"Building code on {server}")
-        ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12", "nginx"])
+    _sync_build(server, ["nginx"], sync=sync, build=build)
 
     with ExitStack() as stack:
         # Set up the nginx working directory
