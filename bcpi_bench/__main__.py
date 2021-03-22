@@ -61,8 +61,10 @@ def exec(ctx, server, command):
 
 
 @cli.command()
+@click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
+@click.option("--build/--no-build", default=True, help="Build the code on the servers")
 @click.pass_context
-def memcached(ctx):
+def memcached(ctx, sync, build):
     """
     Run the memcached benchmark.
     """
@@ -70,11 +72,13 @@ def memcached(ctx):
     conf = ctx.obj
     server = conf.address(conf.memcached.server)
 
-    logging.info(f"Syncing code to server {server}")
-    spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
+    if sync:
+        logging.info(f"Syncing code to server {server}")
+        spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
 
-    logging.info(f"Building code on {server}")
-    ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12", "memcached", "mutilate"])
+    if build:
+        logging.info(f"Building code on {server}")
+        ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12", "memcached", "mutilate"])
 
     with ExitStack() as stack:
         logging.info(f"Starting memcached on {server}")
@@ -128,8 +132,10 @@ def memcached(ctx):
 
 
 @cli.command()
+@click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
+@click.option("--build/--no-build", default=True, help="Build the code on the servers")
 @click.pass_context
-def nginx(ctx):
+def nginx(ctx, sync, build):
     """
     Run the nginx benchmark.
     """
@@ -137,11 +143,13 @@ def nginx(ctx):
     conf = ctx.obj
     server = conf.address(conf.nginx.server)
 
-    logging.info(f"Syncing code to server {server}")
-    spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
+    if sync:
+        logging.info(f"Syncing code to server {server}")
+        spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
 
-    logging.info(f"Building code on {server}")
-    ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12", "nginx"])
+    if build:
+        logging.info(f"Building code on {server}")
+        ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12", "nginx"])
 
     with ExitStack() as stack:
         # Set up the nginx working directory
