@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
 from .config import Config
-from .spawn import spawn, ssh_spawn
+from .monitor import Monitor
 
 import click
-from contextlib import ExitStack
 import logging
 from pathlib import Path
 from time import sleep
@@ -43,9 +42,10 @@ def ssh_copy_id(ctx, servers):
     if not servers:
         servers = list(ctx.obj.servers.keys())
 
-    for server in servers:
-        address = ctx.obj.address(server)
-        spawn(["ssh-copy-id", address])
+    with Monitor() as monitor:
+        for server in servers:
+            address = ctx.obj.address(server)
+            monitor.spawn(["ssh-copy-id", address])
 
 
 @cli.command()
@@ -56,22 +56,24 @@ def exec(ctx, server, command):
     """
     Execute a command on a server.
     """
-    address = ctx.obj.address(server)
-    ssh_spawn(address, command)
+
+    with Monitor() as monitor:
+        address = ctx.obj.address(server)
+        monitor.ssh_spawn(address, command)
 
 
-def _sync_build(server, targets, sync=True, build=True):
+def _sync_build(monitor, server, targets, sync=True, build=True):
     """
     Sync and build the code on a server.
     """
 
     if sync:
         logging.info(f"Syncing code to server {server}")
-        spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
+        monitor.spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:bcpi-bench"])
 
     if build:
         logging.info(f"Building code on {server}")
-        ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12"] + list(targets))
+        monitor.ssh_spawn(server, ["make", "-C", "bcpi-bench", "-j12"] + list(targets))
 
 
 @cli.command()
@@ -85,14 +87,17 @@ def build(ctx, sync, server, targets):
     """
 
     conf = ctx.obj
-    _sync_build(conf.address(server), targets, sync=sync)
+
+    with Monitor() as monitor:
+        _sync_build(monitor, conf.address(server), targets, sync=sync)
 
 
 @cli.command()
 @click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
 @click.option("--build/--no-build", default=True, help="Build the code on the servers")
+@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
 @click.pass_context
-def memcached(ctx, sync, build):
+def memcached(ctx, sync, build, pmc_stat):
     """
     Run the memcached benchmark.
     """
@@ -100,9 +105,9 @@ def memcached(ctx, sync, build):
     conf = ctx.obj
     server = conf.address(conf.memcached.server)
 
-    _sync_build(server, ["memcached", "mutilate"], sync=sync, build=build)
+    with Monitor() as monitor:
+        _sync_build(monitor, server, ["memcached", "mutilate"], sync=sync, build=build)
 
-    with ExitStack() as stack:
         logging.info(f"Starting memcached on {server}")
         server_cmd = [
             "./bcpi-bench/memcached/memcached",
@@ -111,12 +116,13 @@ def memcached(ctx, sync, build):
             "-b", "4096",
             "-t", str(conf.memcached.server_threads),
         ]
-        server_proc = ssh_spawn(server, server_cmd, bg=True)
-        stack.enter_context(server_proc)
+        if pmc_stat:
+            server_cmd = ["pmc", "stat", "--"] + server_cmd
+        server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
 
         sleep(1)
         logging.info(f"Pre-loading data on {server}")
-        ssh_spawn(server, ["./bcpi-bench/mutilate/mutilate", "--loadonly", "-s", "localhost"])
+        monitor.ssh_spawn(server, ["./bcpi-bench/mutilate/mutilate", "--loadonly", "-s", "localhost"])
 
         master_cmd = [
             "./bcpi-bench/mutilate/mutilate",
@@ -143,28 +149,28 @@ def memcached(ctx, sync, build):
         for client in conf.memcached.clients:
             client_addr = conf.address(client)
             logging.info(f"Starting client on {client_addr}")
-            clients.append(ssh_spawn(client_addr, client_cmd, bg=True))
-            stack.enter_context(clients[-1])
+            clients.append(monitor.ssh_spawn(client_addr, client_cmd, bg=True))
             master_cmd += ["-a", client_addr]
 
         sleep(1)
         master = conf.address(conf.memcached.master)
         logging.info(f"Starting master on {master}")
-        ssh_spawn(master, master_cmd)
+        monitor.ssh_spawn(master, master_cmd)
 
         for client, proc in zip(conf.memcached.clients, clients):
             logging.info(f"Terminating client on {conf.address(client)}")
             proc.terminate()
 
         logging.info(f"Terminating server on {server}")
-        server_proc.terminate()
+        monitor.ssh_spawn(server, ["killall", "memcached"])
 
 
 @cli.command()
 @click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
 @click.option("--build/--no-build", default=True, help="Build the code on the servers")
+@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
 @click.pass_context
-def nginx(ctx, sync, build):
+def nginx(ctx, sync, build, pmc_stat):
     """
     Run the nginx benchmark.
     """
@@ -172,23 +178,24 @@ def nginx(ctx, sync, build):
     conf = ctx.obj
     server = conf.address(conf.nginx.server)
 
-    _sync_build(server, ["nginx"], sync=sync, build=build)
+    with Monitor() as monitor:
+        _sync_build(monitor, server, ["nginx"], sync=sync, build=build)
 
-    with ExitStack() as stack:
         # Set up the nginx working directory
         logging.info(f"Starting nginx on {server}")
-        ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
-        ssh_spawn(server, ["mkdir", "-p", conf.nginx.prefix + "/conf", conf.nginx.prefix + "/logs"])
-        ssh_spawn(server, ["cp", "./bcpi-bench/" + conf.nginx.config, conf.nginx.prefix + "/conf"])
-        ssh_spawn(server, ["cp", "./bcpi-bench/nginx/docs/html/index.html", conf.nginx.prefix])
+        monitor.ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
+        monitor.ssh_spawn(server, ["mkdir", "-p", conf.nginx.prefix + "/conf", conf.nginx.prefix + "/logs"])
+        monitor.ssh_spawn(server, ["cp", "./bcpi-bench/" + conf.nginx.config, conf.nginx.prefix + "/conf"])
+        monitor.ssh_spawn(server, ["cp", "./bcpi-bench/nginx/docs/html/index.html", conf.nginx.prefix])
 
         server_cmd = [
             "./bcpi-bench/nginx/objs/nginx",
             "-e", "stderr",
             "-p", conf.nginx.prefix,
         ]
-        server_proc = ssh_spawn(server, server_cmd, bg=True)
-        stack.enter_context(server_proc)
+        if pmc_stat:
+            server_cmd = ["pmc", "stat", "--"] + server_cmd
+        server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
 
         sleep(1)
         client = conf.address(conf.nginx.client)
@@ -200,7 +207,7 @@ def nginx(ctx, sync, build):
             "-t", str(conf.nginx.client_threads),
             f"http://{server}:8123/",
         ]
-        ssh_spawn(client, client_cmd)
+        monitor.ssh_spawn(client, client_cmd)
 
         logging.info(f"Terminating server on {server}")
-        server_proc.terminate()
+        monitor.ssh_spawn(server, ["killall", "nginx"])
