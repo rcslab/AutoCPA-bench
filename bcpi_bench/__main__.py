@@ -130,6 +130,13 @@ def memcached(ctx, sync, build):
         logging.info(f"Starting master on {master}")
         ssh_spawn(master, master_cmd)
 
+        for client, proc in zip(conf.memcached.clients, clients):
+            logging.info(f"Terminating client on {conf.address(client)}")
+            proc.terminate()
+
+        logging.info(f"Terminating server on {server}")
+        server_proc.terminate()
+
 
 @cli.command()
 @click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
@@ -179,4 +186,5 @@ def nginx(ctx, sync, build):
         ]
         ssh_spawn(client, client_cmd)
 
+        logging.info(f"Terminating server on {server}")
         server_proc.terminate()
