@@ -45,5 +45,5 @@ def ssh_spawn(address, command, bg=False, check=True) -> subprocess.Popen:
     Run a command over ssh.
     """
 
-    cmd = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-tq", address, "--"] + list(command)
+    cmd = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-ttq", address, "--"] + list(command)
     return spawn(cmd, bg=bg, check=check)
