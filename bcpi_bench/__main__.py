@@ -168,8 +168,9 @@ def memcached(ctx, sync, build, pmc_stat):
 @cli.command()
 @click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
 @click.option("--build/--no-build", default=True, help="Build the code on the servers")
+@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
 @click.pass_context
-def nginx(ctx, sync, build):
+def nginx(ctx, sync, build, pmc_stat):
     """
     Run the nginx benchmark.
     """
@@ -192,6 +193,8 @@ def nginx(ctx, sync, build):
             "-e", "stderr",
             "-p", conf.nginx.prefix,
         ]
+        if pmc_stat:
+            server_cmd = ["pmc", "stat", "--"] + server_cmd
         server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
 
         sleep(1)
@@ -207,4 +210,4 @@ def nginx(ctx, sync, build):
         monitor.ssh_spawn(client, client_cmd)
 
         logging.info(f"Terminating server on {server}")
-        server_proc.terminate()
+        monitor.ssh_spawn(server, ["killall", "nginx"])
