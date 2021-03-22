@@ -95,6 +95,7 @@ def build(ctx, sync, server, targets):
 @cli.command()
 @click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
 @click.option("--build/--no-build", default=True, help="Build the code on the servers")
+@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
 @click.pass_context
 def memcached(ctx, sync, build, pmc_stat):
     """
@@ -115,6 +116,8 @@ def memcached(ctx, sync, build, pmc_stat):
             "-b", "4096",
             "-t", str(conf.memcached.server_threads),
         ]
+        if pmc_stat:
+            server_cmd = ["pmc", "stat", "--"] + server_cmd
         server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
 
         sleep(1)
@@ -159,7 +162,7 @@ def memcached(ctx, sync, build, pmc_stat):
             proc.terminate()
 
         logging.info(f"Terminating server on {server}")
-        server_proc.terminate()
+        monitor.ssh_spawn(server, ["killall", "memcached"])
 
 
 @cli.command()
