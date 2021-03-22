@@ -60,15 +60,15 @@ class Config:
 
     @classmethod
     def load(cls, file):
-        return cls(toml.load(file))
+        return cls(**toml.load(file))
 
-    def __init__(self, data):
+    def __init__(self, servers, memcached, nginx):
         self.servers = {}
-        for key, server in data["servers"].items():
+        for key, server in servers.items():
             self.servers[key] = Server(**server)
 
-        self.memcached = MemcachedConfig(**data["memcached"])
-        self.nginx = NginxConfig(**data["nginx"])
+        self.memcached = MemcachedConfig(**memcached)
+        self.nginx = NginxConfig(**nginx)
 
     def address(self, server):
         """
