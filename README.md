@@ -116,6 +116,9 @@ New benchmarks must be set up in a few places:
        * tag                   release-1.19.8 -> FETCH_HEAD
       Merge made by the 'recursive' strategy.
 
+- Add the new subproject to the Makefile.
+  For example, there should be an `nginx` target and a `clean-nginx` target.
+
 - Configuration is stored in `cluster.conf`.
   The Python representation is found in `bcpi_bench/config.py`.
   Add the appropriate class, e.g. `NginxConfig`, and wire it up to the root `Config` object in `Config.__init__()`.

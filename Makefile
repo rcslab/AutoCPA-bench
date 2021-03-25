@@ -1,5 +1,6 @@
 GMAKE := gmake
-SCONS := scons-2.7
+SCONS := scons
+SCONS2 := scons-2.7
 
 .PHONY: all
 all: \
@@ -28,12 +29,12 @@ clean-memcached:
 .PHONY: mutilate
 mutilate:
 	cd ./mutilate \
-	    && $(SCONS)
+	    && $(SCONS2)
 
 .PHONY: clean-mutilate
 clean-mutilate:
 	cd ./mutilate \
-	    && $(SCONS) -c
+	    && $(SCONS2) -c
 
 .PHONY: nginx
 nginx:
@@ -45,3 +46,13 @@ nginx:
 clean-nginx:
 	cd ./nginx \
 	    && $(MAKE) clean
+
+.PHONY: lighttpd
+lighttpd:
+	cd ./lighttpd \
+	    && $(SCONS) build_static=1 build_dynamic=0
+
+.PHONY: clean-lighttpd
+clean-lighttpd:
+	cd ./lighttpd \
+	    && $(SCONS) -c

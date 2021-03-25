@@ -211,3 +211,50 @@ def nginx(ctx, sync, build, pmc_stat):
 
         logging.info(f"Terminating server on {server}")
         monitor.ssh_spawn(server, ["killall", "nginx"])
+
+
+@cli.command()
+@click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
+@click.option("--build/--no-build", default=True, help="Build the code on the servers")
+@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
+@click.pass_context
+def lighttpd(ctx, sync, build, pmc_stat):
+    """
+    Run the lighttpd benchmark.
+    """
+
+    conf = ctx.obj
+    server = conf.address(conf.lighttpd.server)
+
+    with Monitor() as monitor:
+        _sync_build(monitor, server, ["lighttpd"], sync=sync, build=build)
+
+        # Set up the lighttpd working directory
+        logging.info(f"Starting lighttpd on {server}")
+        monitor.ssh_spawn(server, ["rm", "-rf", conf.lighttpd.webroot])
+        monitor.ssh_spawn(server, ["mkdir", "-p", conf.lighttpd.webroot])
+        monitor.ssh_spawn(server, ["cp", "./bcpi-bench/lighttpd/tests/docroot/www/index.html", conf.lighttpd.webroot])
+
+        server_cmd = [
+            "./bcpi-bench/lighttpd/sconsbuild/static/build/lighttpd",
+            "-f", "./bcpi-bench/" + conf.lighttpd.config,
+            "-D",
+        ]
+        if pmc_stat:
+            server_cmd = ["pmc", "stat", "--"] + server_cmd
+        server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+
+        sleep(1)
+        client = conf.address(conf.lighttpd.client)
+        logging.info(f"Starting wrk on {client}")
+        client_cmd = [
+            "wrk",
+            "-c", str(conf.lighttpd.connections),
+            "-d", str(conf.lighttpd.duration),
+            "-t", str(conf.lighttpd.client_threads),
+            f"http://{server}:8123/",
+        ]
+        monitor.ssh_spawn(client, client_cmd)
+
+        logging.info(f"Terminating server on {server}")
+        monitor.ssh_spawn(server, ["killall", "lighttpd"])
