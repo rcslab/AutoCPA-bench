@@ -1,0 +1,4 @@
+{
+  "phabricator.uri" : "https://review.rcs.uwaterloo.ca",
+  "load" : [ ".arctools/clang-format-linter" ]
+}
