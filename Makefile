@@ -5,13 +5,17 @@ SCONS := scons-2.7
 all: \
     memcached \
     mutilate \
-    nginx
+    nginx \
+	rocksdb \
+	ppd \
 
-.PHONY: clean
-clean: \
+.PHONY: clean clean-all
+clean clean-all: \
     clean-memcached \
     clean-mutilate \
-    clean-nginx
+    clean-nginx \
+	clean-ppd \
+	clean-rocksdb
 
 .PHONY: memcached
 memcached:
@@ -22,8 +26,7 @@ memcached:
 
 .PHONY: clean-memcached
 clean-memcached:
-	cd ./memcached \
-	    && $(MAKE) clean
+	cd ./memcached
 
 .PHONY: mutilate
 mutilate:
@@ -43,5 +46,28 @@ nginx:
 
 .PHONY: clean-nginx
 clean-nginx:
-	cd ./nginx \
-	    && $(MAKE) clean
+	cd ./nginx
+
+.PHONY: rocksdb
+rocksdb:
+	cd ./rocksdb \
+		&& $(GMAKE) static_lib -j48 \
+		&& sudo $(GMAKE) install
+
+.PHONY: clean-rocksdb
+clean-rocksdb:
+	cd ./rocksdb \
+		&& $(GMAKE) clean
+
+.PHONY: ppd
+ppd:
+	cd ./kqsched/pingpong \
+		&& mkdir -p build \
+		&& cd build \
+		&& cmake .. \
+		&& $(MAKE)
+
+.PHONY: clean-ppd
+clean-ppd:
+	rm -r ./kqsched/pingpong/build
+

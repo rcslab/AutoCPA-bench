@@ -17,6 +17,39 @@ class Server:
 
     address: str
 
+@dataclass
+class PkgConfig:
+    """
+    plg config
+    """
+    servers: List[str]
+    pkg: List[str]
+    pkg_rm: List[str]
+
+@dataclass
+class CommonConfig:
+    """
+    common config
+    """
+
+    remote_dir: str
+    local_dir: str
+    # filled at runtime
+    output_dir: str
+    monitor_verbose: int
+
+@dataclass
+class BcpidConfig:
+    """
+    bcpid config
+    """
+    enable: int
+    root_dir: str
+    ghidra_proj_dir: str
+    analyze: int
+    analyze_opts: str
+    analyze_counter: str
+    output_dir: str
 
 @dataclass
 class MemcachedConfig:
@@ -47,6 +80,27 @@ class NginxConfig:
     connections: int
     duration: float
 
+@dataclass
+class RocksdbConfig:
+    """
+    rocksdb benchmark configuration.
+    """
+
+    server: str
+    db_directory: str
+    master: str
+    clients: List[str]
+    server_threads: int
+    client_threads: int
+    warmup: int
+    duration: int
+    connections_per_thread: int
+    affinity: int
+    qps: int
+    master_qps: int
+    master_connections: int
+    master_threads: int
+
 
 @dataclass
 class Config:
@@ -57,18 +111,26 @@ class Config:
     servers: Dict[str, Server]
     memcached: MemcachedConfig
     nginx: NginxConfig
+    rocksdb: RocksdbConfig
+    bcpid: BcpidConfig
+    common: CommonConfig
+    pkg: PkgConfig
 
     @classmethod
     def load(cls, file):
         return cls(**toml.load(file))
 
-    def __init__(self, servers, memcached, nginx):
+    def __init__(self, servers, common, pkg, bcpid, memcached, nginx, rocksdb):
         self.servers = {}
         for key, server in servers.items():
             self.servers[key] = Server(**server)
 
         self.memcached = MemcachedConfig(**memcached)
         self.nginx = NginxConfig(**nginx)
+        self.rocksdb = RocksdbConfig(**rocksdb)
+        self.common = CommonConfig(**common)
+        self.bcpid = BcpidConfig(**bcpid)
+        self.pkg = PkgConfig(**pkg)
 
     def address(self, server):
         """

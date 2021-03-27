@@ -1,0 +1,3 @@
+[submodule "kqsched"]
+	path = kqsched
+	url = ssh://vcs@review.rcs.uwaterloo.ca:77/source/kqsched.git
