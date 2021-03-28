@@ -8,6 +8,7 @@ all: \
     nginx \
 	rocksdb \
 	ppd \
+	bcpi
 
 .PHONY: clean clean-all
 clean clean-all: \
@@ -15,7 +16,8 @@ clean clean-all: \
     clean-mutilate \
     clean-nginx \
 	clean-ppd \
-	clean-rocksdb
+	clean-rocksdb \
+	clean-bcpi
 
 .PHONY: memcached
 memcached:
@@ -69,5 +71,14 @@ ppd:
 
 .PHONY: clean-ppd
 clean-ppd:
-	rm -r ./kqsched/pingpong/build
+	rm -rf ./kqsched/pingpong/build
 
+.PHONY: bcpi
+bcpi:
+	cd ./bcpi \
+	&& make
+
+.PHONY: clean-bcpi
+clean-bcpi:
+	cd ./bcpi \
+	&& make clean

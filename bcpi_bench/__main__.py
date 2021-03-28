@@ -37,8 +37,10 @@ def cli(ctx, conf, log):
     ctx.obj.common.output_dir = str(os.path.abspath(os.path.expanduser(os.path.join(ctx.obj.common.local_dir, datetime.datetime.now().strftime("%Y%m%d_%H%M%S")))))
     os.makedirs(ctx.obj.common.output_dir, exist_ok=True)
 
-    logging.basicConfig(level=getattr(logging, log.upper()))
-    logging.getLogger().addHandler(logging.FileHandler(os.path.join(ctx.obj.common.output_dir, "log.txt")))
+    logging.basicConfig(level=getattr(logging, log.upper()),
+                        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                        handlers=[logging.StreamHandler(sys.stdout),
+                                    logging.FileHandler(os.path.join(ctx.obj.common.output_dir, "log.txt"))])
 
 
 @cli.command()
@@ -71,23 +73,6 @@ def exec(ctx, server, command):
         address = ctx.obj.address(server)
         monitor.ssh_spawn(address, command)
 
-def _sync_build(monitor, server, remote_dir, targets, sync=True, build=True, clean=False):
-    """
-    Sync and build the code on a server.
-    """
-
-    if sync:
-        logging.info(f"Syncing code to server {server}")
-        monitor.ssh_spawn(server, ["mkdir", "-p", remote_dir])
-        monitor.spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{server}:{remote_dir}"])
-
-    if clean:
-        monitor.ssh_spawn(server, ["make", "-C", f"{remote_dir}"] + list("clean-" + t for t in targets))
-
-    if build:
-        logging.info(f"Building code on {server}")
-        monitor.ssh_spawn(server, ["make", "-C", f"{remote_dir}", "-j48"] + list(targets))
-
 @cli.command()
 @click.option("--sync/--no-sync", default=True, help="Sync the code to the server (Default true)")
 @click.option("--build/--no-build", default=True, help="Build the code to the server (Default true)")
@@ -115,28 +100,25 @@ def build(ctx, sync, build, clean, server, targets):
         for each in conf.pkg.servers:
             full_addresses.append(conf.address(each))
 
-    procs = []
     with Monitor(conf) as monitor:
         if sync:
             logging.info(f"Syncing code...")
-            procs.extend(monitor.ssh_spawn_all(full_addresses, ["mkdir", "-p", remote_dir], bg=True, check=False))
+            procs = monitor.ssh_spawn_all(full_addresses, ["mkdir", "-p", remote_dir], bg=True, check=False)
             monitor.check_success_all(procs)
-            procs.clear()
 
+            procs = []
             for addr in full_addresses:
                 procs.append(monitor.spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{addr}:{remote_dir}"], bg=True, check=False))
             monitor.check_success_all(procs)
-            procs.clear()
 
         if clean:
             logging.info(f"Cleaning...")
-            procs.extend(monitor.ssh_spawn_all(full_addresses, ["make", "-C", f"{remote_dir}"] + list("clean-" + t for t in targets), bg=True, check=False))
+            procs = monitor.ssh_spawn_all(full_addresses, ["make", "-C", f"{remote_dir}"] + list("clean-" + t for t in targets), bg=True, check=False)
             monitor.check_success_all(procs)
-            procs.clear()
 
         if build:
             logging.info(f"Building...")
-            procs.extend(monitor.ssh_spawn_all(full_addresses, ["make", "-C", f"{remote_dir}", "-j12"] + list(targets), bg=True, check=False))
+            procs = monitor.ssh_spawn_all(full_addresses, ["make", "-C", f"{remote_dir}", "-j48"] + list(targets), bg=True, check=False)
             monitor.check_success_all(procs)
 
 @cli.command()
@@ -240,9 +222,9 @@ def _rocksdb(ctx, monitor):
     return success
 
 def _rocksdb_killall(mon : Monitor, targets):
-    for target in targets:
-        mon.ssh_spawn(target, ["sudo", "killall", "ppd", "&&",
-                               "sudo", "killall", "dismember"], check=False)
+    procs = mon.ssh_spawn_all(targets, ["sudo", "killall", "ppd"], bg=True)
+    procs.extend(mon.ssh_spawn_all(targets, ["sudo", "killall", "dismember"], bg=True))
+    mon.wait_all(procs)
 
 def _rocksdb_checkerr(mon : Monitor, targets) -> subprocess.Popen:
     for target in targets:
@@ -269,23 +251,35 @@ def pkg(ctx, server, upgrade):
         for each in servers:
             full_addresses.append(conf.address(each))
     
-    procs = []
-    cmd = ["sudo", "pkg", "update"]
-    if upgrade:
-        cmd += ["&&", "sudo", "pkg", "upgrade", "-y"]
-    cmd += ["&&","sudo", "pkg", "remove", "-y"] + list(pkg_conf.pkg_rm) + ["||", "true"]
-    cmd += ["&&", "sudo", "pkg", "install", "-y"] + list(pkg_conf.pkg)
     with Monitor(conf) as mon:
+        cmd = ["sudo", "pkg", "update"]
+        procs = mon.ssh_spawn_all(full_addresses, cmd, bg=True, check=False)
+        mon.check_success_all(procs)
+
+        if upgrade:
+            cmd = ["sudo", "pkg", "upgrade", "-y"]
+            procs = mon.ssh_spawn_all(full_addresses, cmd, bg=True, check=False)
+            mon.check_success_all(procs)
+        
+        cmd = ["sudo", "pkg", "remove", "-y"] + list(pkg_conf.pkg_rm)
+        procs = mon.ssh_spawn_all(full_addresses, cmd, bg=True, check=False)
+        mon.wait_all(procs)
+
+        cmd = ["sudo", "pkg", "install", "-y"] + list(pkg_conf.pkg)
         procs = mon.ssh_spawn_all(full_addresses, cmd, bg=True, check=False)
         mon.check_success_all(procs)
 
 
 @cli.command()
-@click.option("--sync/--no-sync", default=True, help="ONLY Sync the code to the servers")
-@click.option("--build/--no-build", default=True, help="ONLY Build the code on the servers")
 @click.option("--pmc-stat/--no-pmc-stat", default=False, help="ONLY Run the benchmark under pmc stat")
 @click.pass_context
-def memcached(ctx, sync, build, pmc_stat):
+def memcached(ctx, **kwargs):
+    conf = ctx.obj.memcached
+    common_conf = ctx.obj.common
+    bcpid_stub(ctx, _memcached, ctx.obj.address(conf.server),
+                os.path.join(common_conf.remote_dir,"memcached/memcached"),**kwargs)
+
+def _memcached(ctx, monitor, pmc_stat):
     """
     Run the memcached benchmark.
     """
@@ -295,120 +289,115 @@ def memcached(ctx, sync, build, pmc_stat):
     memcached_exe = os.path.join(conf.common.remote_dir, "memcached/memcached")
     mutilate_exe = os.path.join(conf.common.remote_dir, "mutilate/mutilate")
 
-    with Monitor(conf) as monitor:
-        full_addresses = []
-        for client in conf.memcached.clients:
-            full_addresses.append(conf.address(client))
-        full_addresses.append(conf.address(conf.memcached.server))
-        full_addresses.append(conf.address(conf.memcached.master))
-        for addr in full_addresses:
-            _sync_build(monitor, addr, conf.common.remote_dir, ["memcached", "mutilate"], sync=sync, build=build)
-        if sync or build:
-            return True
+    logging.info(f"Starting memcached on {server}")
+    server_cmd = [
+        memcached_exe,
+        "-m", "1024",
+        "-c", "65536",
+        "-b", "4096",
+        "-t", str(conf.memcached.server_threads),
+    ]
+    if pmc_stat:
+        server_cmd = ["pmc", "stat", "--"] + server_cmd
+    server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
 
-        logging.info(f"Starting memcached on {server}")
-        server_cmd = [
-            memcached_exe,
-            "-m", "1024",
-            "-c", "65536",
-            "-b", "4096",
-            "-t", str(conf.memcached.server_threads),
-        ]
-        if pmc_stat:
-            server_cmd = ["pmc", "stat", "--"] + server_cmd
-        server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+    sleep(1)
+    logging.info(f"Pre-loading data on {server}")
+    monitor.ssh_spawn(server, [mutilate_exe, "--loadonly", "-s", "localhost"])
 
-        sleep(1)
-        logging.info(f"Pre-loading data on {server}")
-        monitor.ssh_spawn(server, [mutilate_exe, "--loadonly", "-s", "localhost"])
+    master_cmd = [
+        mutilate_exe,
+        "--noload",
+        "-K", "fb_key",
+        "-V", "fb_value",
+        "-i", "fb_ia",
+        "-u", "0.03",
+        "-Q", "1000",
+        "-T", str(conf.memcached.client_threads),
+        "-C", "1",
+        "-c", str(conf.memcached.connections_per_thread),
+        "-w", str(conf.memcached.warmup),
+        "-t", str(conf.memcached.duration),
+        "-s", server,
+    ]
 
-        master_cmd = [
-            mutilate_exe,
-            "--noload",
-            "-K", "fb_key",
-            "-V", "fb_value",
-            "-i", "fb_ia",
-            "-u", "0.03",
-            "-Q", "1000",
-            "-T", str(conf.memcached.client_threads),
-            "-C", "1",
-            "-c", str(conf.memcached.connections_per_thread),
-            "-w", str(conf.memcached.warmup),
-            "-t", str(conf.memcached.duration),
-            "-s", server,
-        ]
+    client_cmd = [
+        mutilate_exe,
+        "-A",
+        "-T", str(conf.memcached.client_threads),
+    ]
+    clients = []
+    for client in conf.memcached.clients:
+        client_addr = conf.address(client)
+        logging.info(f"Starting client on {client_addr}")
+        clients.append(monitor.ssh_spawn(client_addr, client_cmd, bg=True))
+        master_cmd += ["-a", client_addr]
 
-        client_cmd = [
-            mutilate_exe,
-            "-A",
-            "-T", str(conf.memcached.client_threads),
-        ]
-        clients = []
-        for client in conf.memcached.clients:
-            client_addr = conf.address(client)
-            logging.info(f"Starting client on {client_addr}")
-            clients.append(monitor.ssh_spawn(client_addr, client_cmd, bg=True))
-            master_cmd += ["-a", client_addr]
+    sleep(1)
+    master = conf.address(conf.memcached.master)
+    logging.info(f"Starting master on {master}")
+    monitor.ssh_spawn(master, master_cmd)
 
-        sleep(1)
-        master = conf.address(conf.memcached.master)
-        logging.info(f"Starting master on {master}")
-        monitor.ssh_spawn(master, master_cmd)
+    for client, proc in zip(conf.memcached.clients, clients):
+        logging.info(f"Terminating client on {conf.address(client)}")
+        proc.terminate()
 
-        for client, proc in zip(conf.memcached.clients, clients):
-            logging.info(f"Terminating client on {conf.address(client)}")
-            proc.terminate()
+    logging.info(f"Terminating server on {server}")
+    monitor.ssh_spawn(server, ["killall", "memcached"])
 
-        logging.info(f"Terminating server on {server}")
-        monitor.ssh_spawn(server, ["killall", "memcached"])
+    return True
 
 
 @cli.command()
-@click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
-@click.option("--build/--no-build", default=True, help="Build the code on the servers")
 @click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
 @click.pass_context
-def nginx(ctx, sync, build, pmc_stat):
+def nginx(ctx, **kwargs):
+    conf = ctx.obj.nginx
+    common_conf = ctx.obj.common
+    bcpid_stub(ctx, _nginx, ctx.obj.address(conf.server),
+                os.path.join(common_conf.remote_dir,"nginx/objs/nginx"), **kwargs)
+
+def _nginx(ctx, monitor, pmc_stat):
     """
     Run the nginx benchmark.
     """
 
     conf = ctx.obj
+    common_conf = conf.common
     server = conf.address(conf.nginx.server)
 
-    with Monitor(conf) as monitor:
-        _sync_build(monitor, server, conf.common.remote_dir, ["nginx"], sync=sync, build=build)
+    # Set up the nginx working directory
+    logging.info(f"Starting nginx on {server}")
+    monitor.ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
+    monitor.ssh_spawn(server, ["mkdir", "-p", conf.nginx.prefix + "/conf", conf.nginx.prefix + "/logs"])
+    monitor.ssh_spawn(server, ["cp", os.path.join(common_conf.remote_dir, conf.nginx.config), conf.nginx.prefix + "/conf"])
+    monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/nginx/docs/html/index.html", conf.nginx.prefix])
 
-        # Set up the nginx working directory
-        logging.info(f"Starting nginx on {server}")
-        monitor.ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
-        monitor.ssh_spawn(server, ["mkdir", "-p", conf.nginx.prefix + "/conf", conf.nginx.prefix + "/logs"])
-        monitor.ssh_spawn(server, ["cp", "./bcpi-bench/" + conf.nginx.config, conf.nginx.prefix + "/conf"])
-        monitor.ssh_spawn(server, ["cp", "./bcpi-bench/nginx/docs/html/index.html", conf.nginx.prefix])
+    server_cmd = [
+        os.path.join(common_conf.remote_dir, "nginx/objs/nginx"),
+        "-e", "stderr",
+        "-p", conf.nginx.prefix,
+    ]
+    if pmc_stat:
+        server_cmd = ["pmc", "stat", "--"] + server_cmd
+    server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
 
-        server_cmd = [
-            "./bcpi-bench/nginx/objs/nginx",
-            "-e", "stderr",
-            "-p", conf.nginx.prefix,
-        ]
-        if pmc_stat:
-            server_cmd = ["pmc", "stat", "--"] + server_cmd
-        server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+    sleep(1)
+    client = conf.address(conf.nginx.client)
+    logging.info(f"Starting wrk on {client}")
+    client_cmd = [
+        "wrk",
+        "-c", str(conf.nginx.connections),
+        "-d", str(conf.nginx.duration),
+        "-t", str(conf.nginx.client_threads),
+        f"http://{server}:8123/",
+    ]
+    monitor.ssh_spawn(client, client_cmd)
 
-        sleep(1)
-        client = conf.address(conf.nginx.client)
-        logging.info(f"Starting wrk on {client}")
-        client_cmd = [
-            "wrk",
-            "-c", str(conf.nginx.connections),
-            "-d", str(conf.nginx.duration),
-            "-t", str(conf.nginx.client_threads),
-            f"http://{server}:8123/",
-        ]
-        monitor.ssh_spawn(client, client_cmd)
+    logging.info(f"Terminating server on {server}")
+    monitor.ssh_spawn(server, ["killall", "nginx"])
 
-        logging.info(f"Terminating server on {server}")
-        monitor.ssh_spawn(server, ["killall", "nginx"])
+    return True
 
 # stub function for running bcpid
 def bcpid_stub(ctx, func, server, exe, **kwargs):
@@ -421,33 +410,47 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
     analyze_opts = conf.analyze_opts
     analyze_counter = conf.analyze_counter
     root_dir = conf.root_dir
-    output_dir_prefix = conf.output_dir
+    bcpid_output_dir_prefix = conf.output_dir
+    output_dir = ctx.obj.common.output_dir
+    bcpid_stop_cmd = ["sudo", "killall", "bcpid"]
+    proj_name = os.path.basename(exe)
     
     with Monitor(ctx.obj) as mon:
         while not success:
+            # new folder for each run
             randstr = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_dir = str(os.path.join(output_dir_prefix, randstr))
+            bcpid_output_dir = str(os.path.join(bcpid_output_dir_prefix, randstr))
             if enable:
+                # stop bcpid
+                logging.info("Stopping bcpid...")
+                stop_proc = mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
+                logging.info("Waiting for bcpid stop...")
+                time.sleep(10)
+                mon.wait(stop_proc)
+
                 # start bcpid
-                bcpid_start_cmd = ["sudo", "mkdir", "-p", output_dir, "&&",
+                bcpid_start_cmd  = ["sudo", "mkdir", "-p", bcpid_output_dir, "&&"
                                     "cd", root_dir, "&&", 
-                                    "sudo", "bcpid/bcpid", "-f", "-o", output_dir]
+                                    "sudo", "bcpid/bcpid", "-f", "-o", bcpid_output_dir]
                 
                 logging.info("Starting bcpid...")
                 proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
                 logging.info("Waiting for bcpid init...")
-                sleep(10)
+                time.sleep(10)
 
             success = func(ctx, mon, **kwargs)
 
             if enable:
                 # stop bcpid
-                bcpid_stop_cmd = mon.ssh_spawn(server, ["sudo", "killall", "bcpid"], bg=True, check=False)
                 logging.info("Stopping bcpid...")
                 mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
 
                 logging.info("Waiting for bcpid stop...")
-                mon.wait(proc_bcpid)
+                mon.check_success(proc_bcpid)
+
+                logging.info("Copying bcpid records...")
+                mon.spawn(["mkdir", "-p", f"{output_dir}/bcpid/"])
+                mon.spawn(["scp", f"{server}:{bcpid_output_dir}/*", f"{output_dir}/bcpid/"])
 
                 if not success:
                     # if our test failed, just restart the test
@@ -460,10 +463,14 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
                     if analyze:
                         extract_cmd = ["cd", root_dir, "&&", "sudo", "bcpiquery/bcpiquery", "extract", 
                                         "-c", analyze_counter,
-                                        "-p", output_dir]
+                                        "-p", bcpid_output_dir]
 
                         logging.info("Extracting address info...")
                         mon.ssh_spawn(server, extract_cmd)
+
+                        addr_info_scp_cmd = ["scp", f"{server}:{root_dir}/address_info.csv", f"{output_dir}/"]
+                        logging.info("Copying address info...")
+                        mon.spawn(addr_info_scp_cmd)
 
                         logging.info("Analyzing...")
                         analyze_cmd = [ "sudo", "mkdir", "-p", proj_dir, "&&", 
@@ -473,9 +480,7 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
                         if len(analyze_opts) > 0:
                             analyze_cmd.append(analyze_opts)
                         mon.ssh_spawn(server, analyze_cmd)
-                        logging.info("Analysis done.")
-                        
 
-
-
-
+                        logging.info("Analysis done, copying projects...")
+                        analysis_scp_cmd = ["scp", "-r", f"{server}:{proj_dir}/{os.path.basename(exe)}.rep", f"{output_dir}/"]
+                        mon.spawn(analysis_scp_cmd)

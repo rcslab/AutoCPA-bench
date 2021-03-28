@@ -4,6 +4,7 @@
 Process spawning monitoring.
 """
 import sys
+import os
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path, PurePath
@@ -23,9 +24,10 @@ class Monitor:
         self._stack = ExitStack()
 
         time = datetime.utcnow().isoformat(sep="/")
-        self._dir = Path(f"logs/{time}")
-        self._dir.mkdir(parents=True)
         self.config = config.common
+        
+        self._dir = os.path.join(self.config.output_dir, "monitor_logs")
+        os.makedirs(self._dir)
 
     def _get_verbose(self) -> bool:
         return self.config.monitor_verbose != 0
@@ -46,6 +48,10 @@ class Monitor:
     def wait(self, proc):
         proc.wait()
 
+    def wait_all(self, procs):
+        for proc in procs:
+            self.wait(proc)
+
     def get_return_code(self, proc):
         return proc.returncode
 
@@ -64,8 +70,8 @@ class Monitor:
 
         if bg:
             stdin = subprocess.DEVNULL
-            stdout = NamedTemporaryFile(prefix=f"{name}.", suffix=".stdout", dir=self.config.output_dir, delete=False)
-            stderr = NamedTemporaryFile(prefix=f"{name}.", suffix=".stderr", dir=self.config.output_dir, delete=False)
+            stdout = NamedTemporaryFile(prefix=f"{name}.", suffix=".stdout", dir=self._dir, delete=False)
+            stderr = NamedTemporaryFile(prefix=f"{name}.", suffix=".stderr", dir=self._dir, delete=False)
         else:
             stdin = None
             if self._get_verbose():
