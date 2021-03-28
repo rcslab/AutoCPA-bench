@@ -66,6 +66,7 @@ class MemcachedConfig:
     duration: float
     connections_per_thread: int
 
+
 @dataclass
 class NginxConfig:
     """
@@ -103,6 +104,21 @@ class RocksdbConfig:
 
 
 @dataclass
+class LighttpdConfig:
+    """
+    lighttpd benchmark configuration.
+    """
+
+    config: str
+    webroot: str
+    server: str
+    client: str
+    client_threads: int
+    connections: int
+    duration: float
+
+
+@dataclass
 class Config:
     """
     bcpi_bench configuration (see cluster.conf).
@@ -115,12 +131,13 @@ class Config:
     bcpid: BcpidConfig
     common: CommonConfig
     pkg: PkgConfig
+    lighttpd: LighttpdConfig
 
     @classmethod
     def load(cls, file):
         return cls(**toml.load(file))
 
-    def __init__(self, servers, common, pkg, bcpid, memcached, nginx, rocksdb):
+    def __init__(self, servers, common, pkg, bcpid, memcached, nginx, rocksdb, lighttpd):
         self.servers = {}
         for key, server in servers.items():
             self.servers[key] = Server(**server)
@@ -131,6 +148,7 @@ class Config:
         self.common = CommonConfig(**common)
         self.bcpid = BcpidConfig(**bcpid)
         self.pkg = PkgConfig(**pkg)
+        self.lighttpd = LighttpdConfig(**lighttpd)
 
     def address(self, server):
         """

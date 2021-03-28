@@ -16,8 +16,94 @@ import datetime
 from pathlib import Path
 from time import sleep
 
-
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+
+# stub function for running bcpid
+def bcpid_stub(ctx, func, server, exe, **kwargs):
+    conf = ctx.obj.bcpid
+
+    success = False
+    enable = conf.enable
+    proj_dir = conf.ghidra_proj_dir
+    analyze = conf.analyze
+    analyze_opts = conf.analyze_opts
+    analyze_counter = conf.analyze_counter
+    root_dir = conf.root_dir
+    bcpid_output_dir_prefix = conf.output_dir
+    output_dir = ctx.obj.common.output_dir
+    bcpid_stop_cmd = ["sudo", "killall", "bcpid"]
+    proj_name = os.path.basename(exe)
+    
+    with Monitor(ctx.obj) as mon:
+        while not success:
+            # new folder for each run
+            randstr = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            bcpid_output_dir = str(os.path.join(bcpid_output_dir_prefix, randstr))
+            if enable:
+                # stop bcpid
+                logging.info("Stopping bcpid...")
+                stop_proc = mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
+                logging.info("Waiting for bcpid stop...")
+                time.sleep(10)
+                mon.wait(stop_proc)
+
+                # start bcpid
+                bcpid_start_cmd  = ["sudo", "mkdir", "-p", bcpid_output_dir, "&&"
+                                    "cd", root_dir, "&&", 
+                                    "sudo", "bcpid/bcpid", "-f", "-o", bcpid_output_dir]
+                
+                logging.info("Starting bcpid...")
+                proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
+                logging.info("Waiting for bcpid init...")
+                time.sleep(10)
+
+            success = func(ctx, mon, **kwargs)
+
+            if enable:
+                # stop bcpid
+                logging.info("Stopping bcpid...")
+                mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
+
+                logging.info("Waiting for bcpid stop...")
+                mon.check_success(proc_bcpid)
+
+                logging.info("Copying bcpid records...")
+                mon.spawn(["mkdir", "-p", f"{output_dir}/bcpid/"])
+                mon.spawn(["scp", f"{server}:{bcpid_output_dir}/*", f"{output_dir}/bcpid/"])
+
+                if not success:
+                    # if our test failed, just restart the test
+                    continue
+
+                if (mon.get_return_code(proc_bcpid) != 0):
+                    logging.warn(f"bcpid unexpected return code {mon.get_return_code(proc_bcpid)}...")
+                    success = False
+                else:
+                    if analyze:
+                        extract_cmd = ["cd", root_dir, "&&", "sudo", "bcpiquery/bcpiquery", "extract", 
+                                        "-c", analyze_counter,
+                                        "-p", bcpid_output_dir]
+
+                        logging.info("Extracting address info...")
+                        mon.ssh_spawn(server, extract_cmd)
+
+                        addr_info_scp_cmd = ["scp", f"{server}:{root_dir}/address_info.csv", f"{output_dir}/"]
+                        logging.info("Copying address info...")
+                        mon.spawn(addr_info_scp_cmd)
+
+                        logging.info("Analyzing...")
+                        analyze_cmd = [ "sudo", "mkdir", "-p", proj_dir, "&&", 
+                                        "cd", root_dir, "&&", 
+                                        "sudo", "scripts/analyze.sh", 
+                                        proj_dir, str(os.path.join(root_dir, "address_info.csv")), exe]
+                        if len(analyze_opts) > 0:
+                            analyze_cmd.append(analyze_opts)
+                        mon.ssh_spawn(server, analyze_cmd)
+
+                        logging.info("Analysis done, copying projects...")
+                        analysis_scp_cmd = ["scp", "-r", f"{server}:{proj_dir}/{os.path.basename(exe)}.rep", f"{output_dir}/"]
+                        mon.spawn(analysis_scp_cmd)
 
 @click.group()
 @click.option(
@@ -399,88 +485,52 @@ def _nginx(ctx, monitor, pmc_stat):
 
     return True
 
-# stub function for running bcpid
-def bcpid_stub(ctx, func, server, exe, **kwargs):
-    conf = ctx.obj.bcpid
+@cli.command()
+@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
+@click.pass_context
+def lighttpd(ctx, **kwargs):
+    conf = ctx.obj.lighttpd
+    common_conf = ctx.obj.common
+    bcpid_stub(ctx, _lighttpd, ctx.obj.address(conf.server),
+                os.path.join(common_conf.remote_dir,"lighttpd/sconsbuild/static/build/lighttpd"), **kwargs)
 
-    success = False
-    enable = conf.enable
-    proj_dir = conf.ghidra_proj_dir
-    analyze = conf.analyze
-    analyze_opts = conf.analyze_opts
-    analyze_counter = conf.analyze_counter
-    root_dir = conf.root_dir
-    bcpid_output_dir_prefix = conf.output_dir
-    output_dir = ctx.obj.common.output_dir
-    bcpid_stop_cmd = ["sudo", "killall", "bcpid"]
-    proj_name = os.path.basename(exe)
+def _lighttpd(ctx, monitor, pmc_stat):
+    """
+    Run the lighttpd benchmark.
+    """
+
+    conf = ctx.obj
+    conf_common = conf.common
+    server = conf.address(conf.lighttpd.server)
+
+    # Set up the lighttpd working directory
+    logging.info(f"Starting lighttpd on {server}")
+    monitor.ssh_spawn(server, ["rm", "-rf", conf.lighttpd.webroot])
+    monitor.ssh_spawn(server, ["mkdir", "-p", conf.lighttpd.webroot])
+    monitor.ssh_spawn(server, ["cp", f"{common.remote_dir}/lighttpd/tests/docroot/www/index.html", conf.lighttpd.webroot])
+
+    server_cmd = [
+        f"{common.remote_dir}/lighttpd/sconsbuild/static/build/lighttpd",
+        "-f", os.path.join(common.remote.dir, conf.lighttpd.config),
+        "-D",
+    ]
+    if pmc_stat:
+        server_cmd = ["pmc", "stat", "--"] + server_cmd
+    server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+
+    sleep(1)
+    client = conf.address(conf.lighttpd.client)
+    logging.info(f"Starting wrk on {client}")
+    client_cmd = [
+        "wrk",
+        "-c", str(conf.lighttpd.connections),
+        "-d", str(conf.lighttpd.duration),
+        "-t", str(conf.lighttpd.client_threads),
+        f"http://{server}:8123/",
+    ]
+    monitor.ssh_spawn(client, client_cmd)
+
+    logging.info(f"Terminating server on {server}")
+    monitor.ssh_spawn(server, ["killall", "lighttpd"])
     
-    with Monitor(ctx.obj) as mon:
-        while not success:
-            # new folder for each run
-            randstr = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            bcpid_output_dir = str(os.path.join(bcpid_output_dir_prefix, randstr))
-            if enable:
-                # stop bcpid
-                logging.info("Stopping bcpid...")
-                stop_proc = mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
-                logging.info("Waiting for bcpid stop...")
-                time.sleep(10)
-                mon.wait(stop_proc)
-
-                # start bcpid
-                bcpid_start_cmd  = ["sudo", "mkdir", "-p", bcpid_output_dir, "&&"
-                                    "cd", root_dir, "&&", 
-                                    "sudo", "bcpid/bcpid", "-f", "-o", bcpid_output_dir]
-                
-                logging.info("Starting bcpid...")
-                proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
-                logging.info("Waiting for bcpid init...")
-                time.sleep(10)
-
-            success = func(ctx, mon, **kwargs)
-
-            if enable:
-                # stop bcpid
-                logging.info("Stopping bcpid...")
-                mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
-
-                logging.info("Waiting for bcpid stop...")
-                mon.check_success(proc_bcpid)
-
-                logging.info("Copying bcpid records...")
-                mon.spawn(["mkdir", "-p", f"{output_dir}/bcpid/"])
-                mon.spawn(["scp", f"{server}:{bcpid_output_dir}/*", f"{output_dir}/bcpid/"])
-
-                if not success:
-                    # if our test failed, just restart the test
-                    continue
-
-                if (mon.get_return_code(proc_bcpid) != 0):
-                    logging.warn(f"bcpid unexpected return code {mon.get_return_code(proc_bcpid)}...")
-                    success = False
-                else:
-                    if analyze:
-                        extract_cmd = ["cd", root_dir, "&&", "sudo", "bcpiquery/bcpiquery", "extract", 
-                                        "-c", analyze_counter,
-                                        "-p", bcpid_output_dir]
-
-                        logging.info("Extracting address info...")
-                        mon.ssh_spawn(server, extract_cmd)
-
-                        addr_info_scp_cmd = ["scp", f"{server}:{root_dir}/address_info.csv", f"{output_dir}/"]
-                        logging.info("Copying address info...")
-                        mon.spawn(addr_info_scp_cmd)
-
-                        logging.info("Analyzing...")
-                        analyze_cmd = [ "sudo", "mkdir", "-p", proj_dir, "&&", 
-                                        "cd", root_dir, "&&", 
-                                        "sudo", "scripts/analyze.sh", 
-                                        proj_dir, str(os.path.join(root_dir, "address_info.csv")), exe]
-                        if len(analyze_opts) > 0:
-                            analyze_cmd.append(analyze_opts)
-                        mon.ssh_spawn(server, analyze_cmd)
-
-                        logging.info("Analysis done, copying projects...")
-                        analysis_scp_cmd = ["scp", "-r", f"{server}:{proj_dir}/{os.path.basename(exe)}.rep", f"{output_dir}/"]
-                        mon.spawn(analysis_scp_cmd)
+    return True
