@@ -49,7 +49,7 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
                 mon.wait(stop_proc)
 
                 # start bcpid
-                bcpid_start_cmd  = ["sudo", "mkdir", "-p", bcpid_output_dir, "&&"
+                bcpid_start_cmd  = ["sudo", "mkdir", "-p", bcpid_output_dir, "&&",
                                     "cd", root_dir, "&&", 
                                     "sudo", "bcpid/bcpid", "-f", "-o", bcpid_output_dir]
                 
