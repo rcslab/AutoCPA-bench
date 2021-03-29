@@ -83,7 +83,8 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
                     if analyze:
                         extract_cmd = ["cd", root_dir, "&&", "sudo", "bcpiquery/bcpiquery", "extract", 
                                         "-c", analyze_counter,
-                                        "-p", bcpid_output_dir]
+                                        "-p", bcpid_output_dir,
+                                        "-o", exe]
 
                         logging.info("Extracting address info...")
                         mon.ssh_spawn(server, extract_cmd)
