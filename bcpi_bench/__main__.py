@@ -74,6 +74,9 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
 
                 if not success:
                     # if our test failed, just restart the test
+                    # this could happen when running multiple clients against the server
+                    # sometimes some connections will be dropped on handshake (see the logic in _rocksdb())
+                    # if so, restart bcpid too for accuracy
                     continue
 
                 if (mon.get_return_code(proc_bcpid) != 0):
@@ -313,7 +316,7 @@ def _rocksdb_killall(mon : Monitor, targets):
     procs.extend(mon.ssh_spawn_all(targets, ["sudo", "killall", "dismember"], bg=True))
     mon.wait_all(procs)
 
-def _rocksdb_checkerr(mon : Monitor, targets) -> subprocess.Popen:
+def _rocksdb_checkerr(mon : Monitor, targets):
     for target in targets:
         if (not mon.check_running(target)) and (mon.get_return_code(target) != 0):
             return target
@@ -457,11 +460,11 @@ def _nginx(ctx, monitor, pmc_stat):
     logging.info(f"Starting nginx on {server}")
     monitor.ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
     monitor.ssh_spawn(server, ["mkdir", "-p", conf.nginx.prefix + "/conf", conf.nginx.prefix + "/logs"])
-    monitor.ssh_spawn(server, ["cp", os.path.join(common_conf.remote_dir, conf.nginx.config), conf.nginx.prefix + "/conf"])
+    monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/conf.nginx.config", conf.nginx.prefix + "/conf"])
     monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/nginx/docs/html/index.html", conf.nginx.prefix])
 
     server_cmd = [
-        os.path.join(common_conf.remote_dir, "nginx/objs/nginx"),
+        f"{common_conf.remote_dir}/nginx/objs/nginx",
         "-e", "stderr",
         "-p", conf.nginx.prefix,
     ]

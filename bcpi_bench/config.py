@@ -20,7 +20,7 @@ class Server:
 @dataclass
 class PkgConfig:
     """
-    plg config
+    pkg config
     """
     servers: List[str]
     pkg: List[str]
@@ -34,8 +34,6 @@ class CommonConfig:
 
     remote_dir: str
     local_dir: str
-    # filled at runtime
-    output_dir: str
     monitor_verbose: int
 
 @dataclass

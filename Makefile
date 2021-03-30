@@ -4,9 +4,9 @@ SCONS2 := scons-2.7
 
 .PHONY: all
 all: \
-    memcached \
-    mutilate \
-    nginx \
+	memcached \
+	mutilate \
+	nginx \
 	rocksdb \
 	ppd \
 	bcpi \
@@ -14,9 +14,9 @@ all: \
 
 .PHONY: clean clean-all
 clean clean-all: \
-    clean-memcached \
-    clean-mutilate \
-    clean-nginx \
+	clean-memcached \
+	clean-mutilate \
+	clean-nginx \
 	clean-ppd \
 	clean-rocksdb \
 	clean-bcpi \
