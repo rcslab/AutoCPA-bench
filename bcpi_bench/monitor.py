@@ -7,6 +7,7 @@ Process spawning monitoring.
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path, PurePath
+from shlex import quote
 import subprocess
 from tempfile import NamedTemporaryFile, mkdtemp
 
@@ -71,6 +72,7 @@ class Monitor:
         Run a command over ssh.
         """
 
-        cmd = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-ttq", address, "--"] + list(command)
+        cmd = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-ttq", address, "--"]
+        cmd += [quote(arg) for arg in command]
         name = PurePath(command[0]).name
         return self._spawn(cmd, name=f"{address}.{name}", bg=bg, check=check)

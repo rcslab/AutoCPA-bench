@@ -258,3 +258,60 @@ def lighttpd(ctx, sync, build, pmc_stat):
 
         logging.info(f"Terminating server on {server}")
         monitor.ssh_spawn(server, ["killall", "lighttpd"])
+
+
+@cli.command()
+@click.option("--sync/--no-sync", default=True, help="Sync the code to the servers")
+@click.option("--build/--no-build", default=True, help="Build the code on the servers")
+@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
+@click.pass_context
+def mysql(ctx, sync, build, pmc_stat):
+    """
+    Run the MySQL benchmark.
+    """
+
+    conf = ctx.obj
+    server = conf.address(conf.lighttpd.server)
+
+    with Monitor() as monitor:
+        _sync_build(monitor, server, ["mysql"], sync=sync, build=build)
+
+        logging.info(f"Starting mysql on {server}")
+        monitor.ssh_spawn(server, ["rm", "-rf", conf.mysql.datadir])
+        monitor.ssh_spawn(server, ["mkdir", "-p", conf.mysql.datadir])
+
+        server_cmd = [
+            "./bcpi-bench/mysql-server/build/bin/mysqld",
+            "--no-defaults",
+            f"--datadir={conf.mysql.datadir}",
+            f"--plugin-dir=./bcpi-bench/{conf.mysql.plugin_dir}",
+        ]
+
+        monitor.ssh_spawn(server, server_cmd + ["--initialize-insecure"])
+
+        if pmc_stat:
+            server_cmd = ["pmc", "stat", "--"] + server_cmd
+        server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+
+        sleep(5)
+        logging.info(f"Creating test database")
+        monitor.ssh_spawn(server, ["mysql", "-u", "root", "-e",
+            "CREATE DATABASE sbtest; CREATE USER sbtest@'%'; GRANT ALL PRIVILEGES ON sbtest.* TO sbtest@'%';"])
+
+        sleep(1)
+        client = conf.address(conf.lighttpd.client)
+        logging.info(f"Starting sysbench on {client}")
+        client_cmd = [
+            "sysbench",
+            "/usr/local/share/sysbench/oltp_read_write.lua",
+            "--db-driver=mysql",
+            f"--mysql-host={server}",
+            f"--mysql-user=sbtest",
+            f"--threads={conf.mysql.client_threads}",
+        ]
+
+        monitor.ssh_spawn(client, client_cmd + ["prepare"])
+        monitor.ssh_spawn(client, client_cmd + ["run"])
+
+        logging.info(f"Terminating server on {server}")
+        monitor.ssh_spawn(server, ["killall", "mysqld"])
