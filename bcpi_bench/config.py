@@ -65,6 +65,19 @@ class LighttpdConfig:
 
 
 @dataclass
+class MysqlConfig:
+    """
+    MySQL benchmark configuration.
+    """
+
+    datadir: str
+    plugin_dir: str
+    server: str
+    client: str
+    client_threads: int
+
+
+@dataclass
 class Config:
     """
     bcpi_bench configuration (see cluster.conf).
@@ -74,12 +87,13 @@ class Config:
     memcached: MemcachedConfig
     nginx: NginxConfig
     lighttpd: LighttpdConfig
+    mysql: MysqlConfig
 
     @classmethod
     def load(cls, file):
         return cls(**toml.load(file))
 
-    def __init__(self, servers, memcached, nginx, lighttpd):
+    def __init__(self, servers, memcached, nginx, lighttpd, mysql):
         self.servers = {}
         for key, server in servers.items():
             self.servers[key] = Server(**server)
@@ -87,6 +101,7 @@ class Config:
         self.memcached = MemcachedConfig(**memcached)
         self.nginx = NginxConfig(**nginx)
         self.lighttpd = LighttpdConfig(**lighttpd)
+        self.mysql = MysqlConfig(**mysql)
 
     def address(self, server):
         """
