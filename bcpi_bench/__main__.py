@@ -6,7 +6,6 @@ from .parser import *
 
 import subprocess
 import click
-import shlex
 import logging
 import datetime
 import time
@@ -46,18 +45,17 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
                 logging.info("Stopping bcpid...")
                 stop_proc = mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
                 logging.info("Waiting for bcpid stop...")
-                time.sleep(10)
+                sleep(3)
                 mon.wait(stop_proc)
 
                 # start bcpid
-                bcpid_start_cmd  = ["sudo", "mkdir", "-p", bcpid_output_dir, "&&",
-                                    "cd", root_dir, "&&", 
-                                    "sudo", "bcpid/bcpid", "-f", "-o", bcpid_output_dir]
+                bcpid_start_cmd  = ["sh", "-c", f"sudo mkdir -p {bcpid_output_dir} && cd {root_dir} && " + 
+                                    f"sudo bcpid/bcpid -f -o {bcpid_output_dir}"]
                 
                 logging.info("Starting bcpid...")
                 proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
                 logging.info("Waiting for bcpid init...")
-                time.sleep(10)
+                sleep(6)
 
             success = func(ctx, mon, **kwargs)
 
@@ -69,10 +67,6 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
                 logging.info("Waiting for bcpid stop...")
                 mon.check_success(proc_bcpid)
 
-                logging.info("Copying bcpid records...")
-                mon.spawn(["mkdir", "-p", f"{output_dir}/bcpid/"])
-                mon.spawn(["scp", f"{server}:{bcpid_output_dir}/*", f"{output_dir}/bcpid/"])
-
                 if not success:
                     # if our test failed, just restart the test
                     # this could happen when running multiple clients against the server
@@ -80,15 +74,17 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
                     # if so, restart bcpid too for accuracy
                     continue
 
+                logging.info("Copying bcpid records...")
+                mon.spawn(["mkdir", "-p", f"{output_dir}/bcpid/"])
+                mon.spawn(["scp", f"{server}:{bcpid_output_dir}/*", f"{output_dir}/bcpid/"])
+
                 if (mon.get_return_code(proc_bcpid) != 0):
                     logging.warn(f"bcpid unexpected return code {mon.get_return_code(proc_bcpid)}...")
                     success = False
                 else:
                     if analyze:
-                        extract_cmd = ["cd", root_dir, "&&", "sudo", "bcpiquery/bcpiquery", "extract", 
-                                        "-c", analyze_counter,
-                                        "-p", bcpid_output_dir,
-                                        "-o", exe]
+                        extract_cmd = [ "sh", "-c", f"cd {root_dir} && sudo bcpiquery/bcpiquery extract -c {analyze_counter}" +
+                            f"-p {bcpid_output_dir} -o {exe}"]
 
                         logging.info("Extracting address info...")
                         mon.ssh_spawn(server, extract_cmd)
@@ -98,10 +94,9 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
                         mon.spawn(addr_info_scp_cmd)
 
                         logging.info("Analyzing...")
-                        analyze_cmd = [ "sudo", "mkdir", "-p", proj_dir, "&&", 
-                                        "cd", root_dir, "&&", 
-                                        "sudo", "scripts/analyze.sh", 
-                                        proj_dir, str(os.path.join(root_dir, "address_info.csv")), exe]
+                        analyze_cmd = [ "sh", "-c", f"sudo mkdir -p {proj_dir} && " +
+                                        f"cd {root_dir} && " +
+                                        f"sudo scripts/analyze.sh {proj_dir} {root_dir}/address_info.csv {exe}"]
                         if len(analyze_opts) > 0:
                             analyze_cmd.append(analyze_opts)
                         mon.ssh_spawn(server, analyze_cmd)
@@ -259,7 +254,7 @@ def _rocksdb(ctx, monitor):
     for client in rdb_conf.clients:
         procs_client.append(monitor.ssh_spawn(conf.address(client), client_cmd, bg=True))
 
-    time.sleep(3)
+    sleep(3)
     # start master
     master_cmd = [dismember_exe, "-s", server,
                                 "-q", str(rdb_conf.qps),
@@ -295,7 +290,7 @@ def _rocksdb(ctx, monitor):
                 success = True
                 break
         
-        time.sleep(1)
+        sleep(1)
         elapsed_time += 1
 
     # killall remaining processes
@@ -578,7 +573,7 @@ def _mysql(ctx, monitor, pmc_stat):
     sleep(5)
     logging.info(f"Creating test database")
     monitor.ssh_spawn(server, ["mysql", "-u", "root", "-e",
-        shlex.quote("CREATE DATABASE sbtest; CREATE USER sbtest@'%'; GRANT ALL PRIVILEGES ON sbtest.* TO sbtest@'%';")])
+        "CREATE DATABASE sbtest; CREATE USER sbtest@'%'; GRANT ALL PRIVILEGES ON sbtest.* TO sbtest@'%';"])
 
     sleep(1)
     client = conf.address(conf.lighttpd.client)

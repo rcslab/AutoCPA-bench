@@ -5,6 +5,7 @@ Process spawning monitoring.
 """
 import sys
 import os
+import shlex
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path, PurePath
@@ -78,8 +79,8 @@ class Monitor:
                 stdout = sys.stdout
                 stderr = sys.stderr
             else:
-                stdout = subprocess.PIPE
-                stderr = subprocess.PIPE
+                stdout = None
+                stderr = None
 
         proc = subprocess.Popen(command, stdin=stdin, stdout=stdout, stderr=stderr)
         proc.stdout = stdout
@@ -112,7 +113,8 @@ class Monitor:
         if not self._get_verbose():
             cmd.append("-q")
         cmd.extend([address, "--"])
-        cmd.extend(command)
+        for s in command:
+            cmd.append(shlex.quote(s))
         name = PurePath(command[0]).name
         return self._spawn(cmd, name=f"{address}.{name}", bg=bg, check=check)
 
