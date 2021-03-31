@@ -6,6 +6,7 @@ from .parser import *
 
 import subprocess
 import click
+import shlex
 import logging
 import datetime
 import time
@@ -198,7 +199,7 @@ def build(ctx, sync, build, clean, server, targets):
 
             procs = []
             for addr in full_addresses:
-                procs.append(monitor.spawn(["rsync", "-aq", f"{ROOT_DIR}/.", f"{addr}:{remote_dir}"], bg=True, check=False))
+                procs.append(monitor.spawn(["rsync", "-azq", f"{ROOT_DIR}/.", f"{addr}:{remote_dir}"], bg=True, check=False))
             monitor.check_success_all(procs)
 
         if clean:
@@ -536,5 +537,65 @@ def _lighttpd(ctx, monitor, pmc_stat):
 
     logging.info(f"Terminating server on {server}")
     monitor.ssh_spawn(server, ["killall", "lighttpd"])
+    
+    return True
+
+@cli.command()
+@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
+@click.pass_context
+def mysql(ctx, **kwargs):
+    conf = ctx.obj.mysql
+    common_conf = ctx.obj.common
+    bcpid_stub(ctx, _mysql, ctx.obj.address(conf.server),
+                f"{common_conf.remote_dir}/mysql-server/build/bin/mysqld", **kwargs)
+
+def _mysql(ctx, monitor, pmc_stat):
+    """
+    Run the MySQL benchmark.
+    """
+
+    conf = ctx.obj
+    common_conf = ctx.obj.common
+    server = conf.address(conf.lighttpd.server)
+
+    logging.info(f"Starting mysql on {server}")
+    monitor.ssh_spawn(server, ["rm", "-rf", conf.mysql.datadir])
+    monitor.ssh_spawn(server, ["mkdir", "-p", conf.mysql.datadir])
+
+    server_cmd = [
+        f"{common_conf.remote_dir}/mysql-server/build/bin/mysqld",
+        "--no-defaults",
+        f"--datadir={conf.mysql.datadir}",
+        f"--plugin-dir=./bcpi-bench/{conf.mysql.plugin_dir}",
+    ]
+
+    monitor.ssh_spawn(server, server_cmd + ["--initialize-insecure"])
+
+    if pmc_stat:
+        server_cmd = ["pmc", "stat", "--"] + server_cmd
+    server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+
+    sleep(5)
+    logging.info(f"Creating test database")
+    monitor.ssh_spawn(server, ["mysql", "-u", "root", "-e",
+        shlex.quote("CREATE DATABASE sbtest; CREATE USER sbtest@'%'; GRANT ALL PRIVILEGES ON sbtest.* TO sbtest@'%';")])
+
+    sleep(1)
+    client = conf.address(conf.lighttpd.client)
+    logging.info(f"Starting sysbench on {client}")
+    client_cmd = [
+        "sysbench",
+        "/usr/local/share/sysbench/oltp_read_write.lua",
+        "--db-driver=mysql",
+        f"--mysql-host={server}",
+        f"--mysql-user=sbtest",
+        f"--threads={conf.mysql.client_threads}",
+    ]
+
+    monitor.ssh_spawn(client, client_cmd + ["prepare"])
+    monitor.ssh_spawn(client, client_cmd + ["run"])
+
+    logging.info(f"Terminating server on {server}")
+    monitor.ssh_spawn(server, ["killall", "mysqld"])
     
     return True

@@ -1,3 +1,4 @@
+CMAKE := cmake
 GMAKE := gmake
 SCONS := scons
 SCONS2 := scons-2.7
@@ -10,7 +11,8 @@ all: \
 	rocksdb \
 	ppd \
 	bcpi \
-	lighttpd
+	lighttpd \
+	mysql
 
 .PHONY: clean clean-all
 clean clean-all: \
@@ -20,7 +22,8 @@ clean clean-all: \
 	clean-ppd \
 	clean-rocksdb \
 	clean-bcpi \
-	clean-lighttpd
+	clean-lighttpd \
+	clean-mysql
 
 .PHONY: memcached
 memcached:
@@ -95,3 +98,18 @@ lighttpd:
 clean-lighttpd:
 	cd ./lighttpd \
 	    && $(SCONS) -c
+
+.PHONY: mysql
+mysql:
+	mkdir -p ./mysql-server/build \
+	    && cd ./mysql-server/build \
+	    && $(CMAKE) .. \
+	        -DBUILD_CONFIG=mysql_release \
+	        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	        -DDOWNLOAD_BOOST=1 \
+	        -DWITH_BOOST=boost \
+	    && $(MAKE)
+
+.PHONY: clean-mysql
+clean-mysql:
+	rm -rf ./mysql-server/build

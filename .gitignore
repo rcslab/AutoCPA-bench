@@ -1,5 +1,7 @@
 /logs/
 
+/mysql-server/build/
+
 /nginx/Makefile
 /nginx/objs/
 
