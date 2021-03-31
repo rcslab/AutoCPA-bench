@@ -34,7 +34,8 @@ memcached:
 
 .PHONY: clean-memcached
 clean-memcached:
-	cd ./memcached
+	cd ./memcached \
+	    && $(MAKE) clean
 
 .PHONY: mutilate
 mutilate:
@@ -54,7 +55,8 @@ nginx:
 
 .PHONY: clean-nginx
 clean-nginx:
-	cd ./nginx
+	cd ./nginx \
+	    && $(MAKE) clean
 
 .PHONY: rocksdb
 rocksdb:
