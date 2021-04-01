@@ -456,7 +456,7 @@ def _nginx(ctx, monitor, pmc_stat):
     logging.info(f"Starting nginx on {server}")
     monitor.ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
     monitor.ssh_spawn(server, ["mkdir", "-p", conf.nginx.prefix + "/conf", conf.nginx.prefix + "/logs"])
-    monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/conf.nginx.config", conf.nginx.prefix + "/conf"])
+    monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/nginx.conf", conf.nginx.prefix + "/conf"])
     monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/nginx/docs/html/index.html", conf.nginx.prefix])
 
     server_cmd = [
@@ -561,7 +561,7 @@ def _mysql(ctx, monitor, pmc_stat):
         f"{common_conf.remote_dir}/mysql-server/build/bin/mysqld",
         "--no-defaults",
         f"--datadir={conf.mysql.datadir}",
-        f"--plugin-dir=./bcpi-bench/{conf.mysql.plugin_dir}",
+        f"--plugin-dir=f{common_conf.remote_dir}/{conf.mysql.plugin_dir}",
     ]
 
     monitor.ssh_spawn(server, server_cmd + ["--initialize-insecure"])
