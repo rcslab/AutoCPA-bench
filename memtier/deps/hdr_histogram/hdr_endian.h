@@ -48,14 +48,28 @@
 
 #	include <sys/endian.h>
 
-#	define be16toh(x) betoh16(x)
-#	define le16toh(x) letoh16(x)
+// #	define be16toh(x) betoh16(x)
+// #	define le16toh(x) letoh16(x)
 
-#	define be32toh(x) betoh32(x)
-#	define le32toh(x) letoh32(x)
+// #	define be32toh(x) betoh32(x)
+// #	define le32toh(x) letoh32(x)
 
-#	define be64toh(x) betoh64(x)
-#	define le64toh(x) letoh64(x)
+// #	define be64toh(x) betoh64(x)
+// #	define le64toh(x) letoh64(x)
+
+/* See this for the fix https://gitlab.isc.org/isc-projects/bind9/-/merge_requests/2001/diffs?commit_id=7ab1fb2a8d5d83380d63400781370297f2502e9c
+ * Recent BSDs should have [bl]e{16,32,64}toh() defined in <sys/endian.h>.
+ * Older ones might not, but these should have the alternatively named
+ * [bl]etoh{16,32,64}() functions defined.
+ */
+# ifndef be16toh
+#  define be16toh(x) betoh16(x)
+#  define le16toh(x) letoh16(x)
+#  define be32toh(x) betoh32(x)
+#  define le32toh(x) letoh32(x)
+#  define be64toh(x) betoh64(x)
+#  define le64toh(x) letoh64(x)
+# endif /* !be16toh */
 
 #elif defined(__WINDOWS__)
 
