@@ -1,0 +1,12 @@
+*\.o
+*\.csv
+!CSV/*
+*\.core
+.depend
+.swp
+wrk2
+evcompat/build
+scripts/pingpong/results.d
+scripts/mem/results.d
+__pycache__
+.vscode

@@ -5,19 +5,25 @@ SCONS2 := scons-2.7
 
 .PHONY: all
 all: \
-    memcached \
-    mutilate \
-    nginx \
-    lighttpd \
-    mysql
+	memcached \
+	mutilate \
+	nginx \
+	rocksdb \
+	ppd \
+	bcpi \
+	lighttpd \
+	mysql
 
-.PHONY: clean
-clean: \
-    clean-memcached \
-    clean-mutilate \
-    clean-nginx \
-    clean-lighttpd \
-    clean-mysql
+.PHONY: clean clean-all
+clean clean-all: \
+	clean-memcached \
+	clean-mutilate \
+	clean-nginx \
+	clean-ppd \
+	clean-rocksdb \
+	clean-bcpi \
+	clean-lighttpd \
+	clean-mysql
 
 .PHONY: memcached
 memcached:
@@ -52,6 +58,39 @@ clean-nginx:
 	cd ./nginx \
 	    && $(MAKE) clean
 
+.PHONY: rocksdb
+rocksdb:
+	cd ./rocksdb \
+		&& $(GMAKE) static_lib -j48 \
+		&& sudo $(GMAKE) install
+
+.PHONY: clean-rocksdb
+clean-rocksdb:
+	cd ./rocksdb \
+		&& $(GMAKE) clean
+
+.PHONY: ppd
+ppd:
+	cd ./kqsched/pingpong \
+		&& mkdir -p build \
+		&& cd build \
+		&& cmake .. \
+		&& $(MAKE)
+
+.PHONY: clean-ppd
+clean-ppd:
+	rm -rf ./kqsched/pingpong/build
+
+.PHONY: bcpi
+bcpi:
+	cd ./bcpi \
+	&& make
+
+.PHONY: clean-bcpi
+clean-bcpi:
+	cd ./bcpi \
+	&& make clean
+
 .PHONY: lighttpd
 lighttpd:
 	cd ./lighttpd \
@@ -75,5 +114,4 @@ mysql:
 
 .PHONY: clean-mysql
 clean-mysql:
-	cd ./mysql-server/build \
-	    && $(MAKE) clean
+	rm -rf ./mysql-server/build

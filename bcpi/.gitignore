@@ -1,0 +1,16 @@
+*.a
+*.o
+*.po
+*.debug
+*.full
+*.bin
+*.csv
+*.core
+.depend
+Makefile.local
+
+/bcpid/bcpid
+/bcpiquery/bcpiquery
+
+/ghidra-projects/
+/data/
