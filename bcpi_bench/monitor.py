@@ -96,7 +96,7 @@ class Monitor:
 
         return proc
 
-    def spawn(self, command, bg=False, check=True, prefix=False) -> subprocess.Popen:
+    def spawn(self, command, bg=False, check=True) -> subprocess.Popen:
         """
         Run a command.
         """
