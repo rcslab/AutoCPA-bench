@@ -19,91 +19,159 @@ from time import sleep
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
-# stub function for running bcpid
-def bcpid_stub(ctx, func, server, exe, **kwargs):
-    conf = ctx.obj.bcpid
+def remote_render(ctx, mon, input, server, output):
+    """
+    Render {input} using Config and scp it to remote {server}:{output}
+    """
+    conf = ctx.obj
 
-    success = False
-    enable = conf.enable
-    proj_dir = conf.ghidra_proj_dir
-    analyze = conf.analyze
-    analyze_opts = conf.analyze_opts
-    analyze_counter = conf.analyze_counter
-    root_dir = conf.root_dir
-    bcpid_output_dir_prefix = conf.output_dir
-    output_dir = ctx.obj.common.output_dir
-    bcpid_stop_cmd = ["sudo", "killall", "bcpid"]
-    proj_name = os.path.basename(exe)
+    tmp_file = os.path.join(conf.common.output_dir, os.path.basename(input) + ".tmp")
+
+    conf = ctx.obj
+    with open(input, "r") as f:
+        buf = f.read()
+    buf = conf.render(buf)
+
+    with open(tmp_file, "w") as f:
+        f.write(buf)
+
+    mon.spawn(["scp", tmp_file, f"{server}:{output}"])
+
+
+def pmc_loop(ctx, mon, func, **kwargs):
+    conf = ctx.obj
+    pmc_idx = 0
+
+    if (len(conf.pmc.counters) == 0 or conf.pmc.counters_per_batch <= 0):
+        raise Exception("No pmc counters defined or invalid counters per batch #.")
+
+    while pmc_idx < len(conf.pmc.counters):
+        # passing pmc prefix like this is pretty hacky
+        # another way is to let Monitor handle prefixes/suffixes
+        # i.e. for pmc runs we pass a Monitor with prefix "pmc stat ..."
+        #      and for normal runs we pass a Monitor with empty prefix
+        # but this breaks Monitor's modularity a bit
+        conf.pmc.prefix.clear()
+        conf.pmc.prefix.extend(["sudo", "pmc", "stat", "-j"])
+        pmc_batch_items = min(len(conf.pmc.counters) - pmc_idx, conf.pmc.counters_per_batch)
+        
+        pmc_batch_str = ""
+        for i in range(0, pmc_batch_items):
+            pmc_batch_str += conf.pmc.counters[pmc_idx + i]
+            pmc_batch_str += ','
+        pmc_batch_str = pmc_batch_str[:-1]
+        pmc_idx = pmc_idx + pmc_batch_items
+        conf.pmc.prefix.extend([pmc_batch_str, "--"])
+
+        logging.info("Running with pmc prefix " + str(conf.pmc.prefix))
     
-    with Monitor(ctx.obj) as mon:
+        success = False
         while not success:
-            # new folder for each run
-            randstr = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            bcpid_output_dir = str(os.path.join(bcpid_output_dir_prefix, randstr))
-            if enable:
-                # stop bcpid
-                logging.info("Stopping bcpid...")
-                stop_proc = mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
-                logging.info("Waiting for bcpid stop...")
-                sleep(3)
-                mon.wait(stop_proc)
-
-                # start bcpid
-                bcpid_start_cmd  = ["sh", "-c", f"sudo mkdir -p {bcpid_output_dir} && cd {root_dir} && " + 
-                                    f"sudo bcpid/bcpid -f -o {bcpid_output_dir}"]
-                
-                logging.info("Starting bcpid...")
-                proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
-                logging.info("Waiting for bcpid init...")
-                sleep(6)
-
             success = func(ctx, mon, **kwargs)
 
-            if enable:
-                # stop bcpid
-                logging.info("Stopping bcpid...")
-                mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
+    # clear pmc settings for runs without pmc
+    conf.pmc.prefix.clear()
 
-                logging.info("Waiting for bcpid stop...")
-                mon.check_success(proc_bcpid)
+def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
+    conf = ctx.obj
 
-                if not success:
-                    # if our test failed, just restart the test
-                    # this could happen when running multiple clients against the server
-                    # sometimes some connections will be dropped on handshake (see the logic in _rocksdb())
-                    # if so, restart bcpid too for accuracy
-                    continue
+    success = False
+    proj_dir = conf.bcpid.ghidra_proj_dir
+    analyze = conf.bcpid.analyze
+    analyze_opts = conf.bcpid.analyze_opts
+    analyze_counter = conf.bcpid.analyze_counter
+    root_dir = conf.bcpid.root_dir
+    bcpid_output_dir_prefix = conf.bcpid.output_dir
+    output_dir = conf.common.output_dir
+    bcpid_stop_cmd = ["sudo", "killall", "bcpid"]
+    proj_name = os.path.basename(exe)
 
-                logging.info("Copying bcpid records...")
-                mon.spawn(["mkdir", "-p", f"{output_dir}/bcpid/"])
-                mon.spawn(["scp", f"{server}:{bcpid_output_dir}/*", f"{output_dir}/bcpid/"])
+    while not success:
+        # new folder for each run
+        randstr = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        bcpid_output_dir = str(os.path.join(bcpid_output_dir_prefix, randstr))
 
-                if (mon.get_return_code(proc_bcpid) != 0):
-                    logging.warn(f"bcpid unexpected return code {mon.get_return_code(proc_bcpid)}...")
-                    success = False
-                else:
-                    if analyze:
-                        extract_cmd = [ "sh", "-c", f"cd {root_dir} && sudo bcpiquery/bcpiquery extract -c {analyze_counter}" +
-                            f"-p {bcpid_output_dir} -o {exe}"]
+        # stop bcpid
+        logging.info("Stopping bcpid...")
+        stop_proc = mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
+        logging.info("Waiting for bcpid stop...")
+        sleep(10)
+        mon.wait(stop_proc)
 
-                        logging.info("Extracting address info...")
-                        mon.ssh_spawn(server, extract_cmd)
+        # start bcpid
+        bcpid_start_cmd  = ["sh", "-c", f"sudo mkdir -p {bcpid_output_dir} && cd {root_dir} && " + 
+                            f"sudo bcpid/bcpid -f -o {bcpid_output_dir}"]
+        
+        logging.info("Starting bcpid...")
+        proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
+        logging.info("Waiting for bcpid init...")
+        sleep(10)
 
-                        addr_info_scp_cmd = ["scp", f"{server}:{root_dir}/address_info.csv", f"{output_dir}/"]
-                        logging.info("Copying address info...")
-                        mon.spawn(addr_info_scp_cmd)
+        success = func(ctx, mon, **kwargs)
 
-                        logging.info("Analyzing...")
-                        analyze_cmd = [ "sh", "-c", f"sudo mkdir -p {proj_dir} && " +
-                                        f"cd {root_dir} && " +
-                                        f"sudo scripts/analyze.sh {proj_dir} {root_dir}/address_info.csv {exe}"]
-                        if len(analyze_opts) > 0:
-                            analyze_cmd.append(analyze_opts)
-                        mon.ssh_spawn(server, analyze_cmd)
+        # stop bcpid
+        logging.info("Stopping bcpid...")
+        mon.ssh_spawn(server, bcpid_stop_cmd, check=False)
 
-                        logging.info("Analysis done, copying projects...")
-                        analysis_scp_cmd = ["scp", "-r", f"{server}:{proj_dir}/{os.path.basename(exe)}.rep", f"{output_dir}/"]
-                        mon.spawn(analysis_scp_cmd)
+        logging.info("Waiting for bcpid stop...")
+        mon.check_success(proc_bcpid)
+
+        if not success:
+            # if our test failed, just restart the test
+            # this could happen when running multiple clients against the server
+            # sometimes some connections will be dropped on handshake (see the logic in _rocksdb())
+            # if so, restart bcpid too for accuracy
+            logging.info("Test function returned failure. Re-running...")
+            continue
+
+        logging.info("Copying bcpid records...")
+        mon.spawn(["mkdir", "-p", f"{output_dir}/bcpid/"])
+        mon.spawn(["scp", f"{server}:{bcpid_output_dir}/*", f"{output_dir}/bcpid/"])
+
+        if (mon.get_return_code(proc_bcpid) != 0):
+            logging.warn(f"bcpid unexpected return code {mon.get_return_code(proc_bcpid)}...")
+            success = False
+        else:
+            if analyze:
+                extract_cmd = [ "sh", "-c", f"cd {root_dir} && sudo bcpiquery/bcpiquery extract -c {analyze_counter}" +
+                    f"-p {bcpid_output_dir} -o {exe}"]
+
+                logging.info("Extracting address info...")
+                mon.ssh_spawn(server, extract_cmd)
+
+                addr_info_scp_cmd = ["scp", f"{server}:{root_dir}/address_info.csv", f"{output_dir}/"]
+                logging.info("Copying address info...")
+                mon.spawn(addr_info_scp_cmd)
+
+                logging.info("Analyzing...")
+                analyze_cmd = [ "sh", "-c", f"sudo mkdir -p {proj_dir} && " +
+                                f"cd {root_dir} && " +
+                                f"sudo scripts/analyze.sh {proj_dir} {root_dir}/address_info.csv {exe}"]
+                if len(analyze_opts) > 0:
+                    analyze_cmd.append(analyze_opts)
+                mon.ssh_spawn(server, analyze_cmd)
+
+                logging.info("Analysis done, copying projects...")
+                analysis_scp_cmd = ["scp", "-r", f"{server}:{proj_dir}/{os.path.basename(exe)}.rep", f"{output_dir}/"]
+                mon.spawn(analysis_scp_cmd)
+
+# stub function for handling bcpid and pmc
+def bcpid_stub(ctx, func, server, exe, **kwargs):
+    conf = ctx.obj
+
+    with Monitor(ctx.obj) as mon:
+        if conf.pmc.enable:
+            logging.info("Running pmc loop...")
+            pmc_loop(ctx, mon, func, **kwargs)
+        if conf.bcpid.enable:
+            logging.info("Running bcpid loop...")
+            bcpid_loop(ctx, mon, func, server, exe, **kwargs)
+        if (not conf.pmc.enable) and (not conf.bcpid.enable):
+            logging.info("Running regular loop...")
+            # only run regular test when pmc and bcpid are both disabled
+            while True:
+                if func(ctx, mon, **kwargs):
+                    break
 
 @click.group()
 @click.option(
@@ -113,14 +181,19 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
     help="configuration file"
 )
 @click.option("-l", "--log", default="INFO", type=str, help="log level")
+@click.option("--pmc/--no-pmc", default=False, type=bool, help="collect pmc stat? Default False")
+@click.option("--bcpid/--no-bcpid", default=False, type=bool, help="enable bcpid? Default False")
+@click.option("--analyze/--no-analyze", default=False, type=bool, help="enable analysis? (requires --bcpid) Default False")
 @click.pass_context
-def cli(ctx, conf, log):
+def cli(ctx, conf, log, pmc, bcpid, analyze):
     """
     Control the BCPI benchmarking cluster.
     """
 
     ctx.obj = Config.load(conf)
-    ctx.obj.common.output_dir = str(os.path.abspath(os.path.expanduser(os.path.join(ctx.obj.common.local_dir, datetime.datetime.now().strftime("%Y%m%d_%H%M%S")))))
+    ctx.obj.pmc.enable = pmc
+    ctx.obj.bcpid.enable = bcpid
+    ctx.obj.bcpid.analyze = analyze
     os.makedirs(ctx.obj.common.output_dir, exist_ok=True)
 
     logging.basicConfig(level=getattr(logging, log.upper()),
@@ -173,7 +246,7 @@ def build(ctx, sync, build, clean, server, targets):
 
     conf = ctx.obj
 
-    remote_dir = conf.common.remote_dir
+    remote_dir = os.path.join(conf.common.remote_dir, "bcpi-bench")
 
     if len(targets) == 0:
         targets = []
@@ -213,7 +286,7 @@ def rocksdb(ctx, **kwargs):
     conf = ctx.obj.rocksdb
     common_conf = ctx.obj.common
     bcpid_stub(ctx, _rocksdb, ctx.obj.address(conf.server),
-                os.path.join(common_conf.remote_dir,"kqsched/pingpong/build/ppd"),**kwargs)
+                os.path.join(common_conf.remote_dir,"bcpi-bench/kqsched/pingpong/build/ppd"),**kwargs)
 
 def _rocksdb(ctx, monitor):
     """
@@ -223,13 +296,13 @@ def _rocksdb(ctx, monitor):
     conf = ctx.obj
     rdb_conf = conf.rocksdb
     common_conf = conf.common
-    sample_output = os.path.join(common_conf.remote_dir, "kqsched/pingpong/build/sample.txt")
+    sample_output = os.path.join(common_conf.remote_dir, "bcpi-bench/kqsched/pingpong/build/sample.txt")
     local_sample = f"{common_conf.output_dir}/rocksdb_sample.txt"
 
     server = conf.address(rdb_conf.server)
     master = conf.address(rdb_conf.master)
-    ppd_exe = os.path.join(common_conf.remote_dir,"kqsched/pingpong/build/ppd")
-    dismember_exe = os.path.join(common_conf.remote_dir,"kqsched/pingpong/build/dismember")
+    ppd_exe = os.path.join(common_conf.remote_dir,"bcpi-bench/kqsched/pingpong/build/ppd")
+    dismember_exe = os.path.join(common_conf.remote_dir,"bcpi-bench/kqsched/pingpong/build/dismember")
     affinity = int(rdb_conf.affinity) != 0
     full_addresses = [server, master]
     for client in rdb_conf.clients:
@@ -245,7 +318,7 @@ def _rocksdb(ctx, monitor):
         ppd_cmd.extend(["-a"])
     
     logging.info(f"Starting server...")
-    proc_ppd = monitor.ssh_spawn(server, ppd_cmd, bg=True)
+    proc_ppd = monitor.ssh_spawn(server, conf.pmc.prefix + ppd_cmd, bg=True)
 
     # start clients
     procs_client = []
@@ -357,23 +430,24 @@ def pkg(ctx, server, upgrade):
 
 
 @cli.command()
-@click.option("--pmc-stat/--no-pmc-stat", default=False, help="ONLY Run the benchmark under pmc stat")
 @click.pass_context
 def memcached(ctx, **kwargs):
     conf = ctx.obj.memcached
     common_conf = ctx.obj.common
     bcpid_stub(ctx, _memcached, ctx.obj.address(conf.server),
-                os.path.join(common_conf.remote_dir,"memcached/memcached"),**kwargs)
+                os.path.join(common_conf.remote_dir,"bcpi-bench/memcached/memcached"),**kwargs)
 
-def _memcached(ctx, monitor, pmc_stat):
+def _memcached(ctx, monitor):
     """
     Run the memcached benchmark.
     """
 
     conf = ctx.obj
     server = conf.address(conf.memcached.server)
-    memcached_exe = os.path.join(conf.common.remote_dir, "memcached/memcached")
-    mutilate_exe = os.path.join(conf.common.remote_dir, "mutilate/mutilate")
+    memcached_exe = os.path.join(conf.common.remote_dir, "bcpi-bench/memcached/memcached")
+    mutilate_exe = os.path.join(conf.common.remote_dir, "bcpi-bench/mutilate/mutilate")
+
+    monitor.ssh_spawn(server, ["killall", "memcached"], check=False)
 
     logging.info(f"Starting memcached on {server}")
     server_cmd = [
@@ -383,9 +457,7 @@ def _memcached(ctx, monitor, pmc_stat):
         "-b", "4096",
         "-t", str(conf.memcached.server_threads),
     ]
-    if pmc_stat:
-        server_cmd = ["pmc", "stat", "--"] + server_cmd
-    server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+    server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
 
     sleep(1)
     logging.info(f"Pre-loading data on {server}")
@@ -435,15 +507,14 @@ def _memcached(ctx, monitor, pmc_stat):
 
 
 @cli.command()
-@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
 @click.pass_context
 def nginx(ctx, **kwargs):
     conf = ctx.obj.nginx
     common_conf = ctx.obj.common
     bcpid_stub(ctx, _nginx, ctx.obj.address(conf.server),
-                os.path.join(common_conf.remote_dir,"nginx/objs/nginx"), **kwargs)
+                os.path.join(common_conf.remote_dir, "bcpi-bench/nginx/objs/nginx"), **kwargs)
 
-def _nginx(ctx, monitor, pmc_stat):
+def _nginx(ctx, monitor):
     """
     Run the nginx benchmark.
     """
@@ -456,17 +527,15 @@ def _nginx(ctx, monitor, pmc_stat):
     logging.info(f"Starting nginx on {server}")
     monitor.ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
     monitor.ssh_spawn(server, ["mkdir", "-p", conf.nginx.prefix + "/conf", conf.nginx.prefix + "/logs"])
-    monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/nginx.conf", conf.nginx.prefix + "/conf"])
-    monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/nginx/docs/html/index.html", conf.nginx.prefix])
+    remote_render(ctx, monitor, f"{ROOT_DIR}/nginx.conf", server, conf.nginx.prefix + "/conf/nginx.conf")
+    monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/bcpi-bench/nginx/docs/html/index.html", conf.nginx.prefix])
 
     server_cmd = [
-        f"{common_conf.remote_dir}/nginx/objs/nginx",
+        f"{common_conf.remote_dir}/bcpi-bench/nginx/objs/nginx",
         "-e", "stderr",
         "-p", conf.nginx.prefix,
     ]
-    if pmc_stat:
-        server_cmd = ["pmc", "stat", "--"] + server_cmd
-    server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+    server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
 
     sleep(1)
     client = conf.address(conf.nginx.client)
@@ -486,15 +555,14 @@ def _nginx(ctx, monitor, pmc_stat):
     return True
 
 @cli.command()
-@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
 @click.pass_context
 def lighttpd(ctx, **kwargs):
     conf = ctx.obj.lighttpd
     common_conf = ctx.obj.common
     bcpid_stub(ctx, _lighttpd, ctx.obj.address(conf.server),
-                os.path.join(common_conf.remote_dir,"lighttpd/sconsbuild/static/build/lighttpd"), **kwargs)
+                f"{common_conf.remote_dir}/bcpi-bench/lighttpd/sconsbuild/static/build/lighttpd", **kwargs)
 
-def _lighttpd(ctx, monitor, pmc_stat):
+def _lighttpd(ctx, monitor):
     """
     Run the lighttpd benchmark.
     """
@@ -507,16 +575,15 @@ def _lighttpd(ctx, monitor, pmc_stat):
     logging.info(f"Starting lighttpd on {server}")
     monitor.ssh_spawn(server, ["rm", "-rf", conf.lighttpd.webroot])
     monitor.ssh_spawn(server, ["mkdir", "-p", conf.lighttpd.webroot])
-    monitor.ssh_spawn(server, ["cp", f"{common.remote_dir}/lighttpd/tests/docroot/www/index.html", conf.lighttpd.webroot])
-
+    monitor.ssh_spawn(server, ["cp", f"{conf_common.remote_dir}/bcpi-bench/lighttpd/tests/docroot/www/index.html", conf.lighttpd.webroot])
+    remote_render(ctx, monitor, f"{ROOT_DIR}/lighttpd.conf", server, conf.lighttpd.webroot + "/lighttpd.conf")
+    
     server_cmd = [
-        f"{common.remote_dir}/lighttpd/sconsbuild/static/build/lighttpd",
-        "-f", os.path.join(common.remote.dir, conf.lighttpd.config),
+        f"{conf_common.remote_dir}/bcpi-bench/lighttpd/sconsbuild/static/build/lighttpd",
+        "-f", f"{conf.lighttpd.webroot}/lighttpd.conf",
         "-D",
     ]
-    if pmc_stat:
-        server_cmd = ["pmc", "stat", "--"] + server_cmd
-    server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+    server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
 
     sleep(1)
     client = conf.address(conf.lighttpd.client)
@@ -531,20 +598,19 @@ def _lighttpd(ctx, monitor, pmc_stat):
     monitor.ssh_spawn(client, client_cmd)
 
     logging.info(f"Terminating server on {server}")
-    monitor.ssh_spawn(server, ["killall", "lighttpd"])
+    monitor.ssh_spawn(server, ["sudo", "killall", "lighttpd"])
     
     return True
 
 @cli.command()
-@click.option("--pmc-stat/--no-pmc-stat", default=False, help="Run the benchmark under pmc stat")
 @click.pass_context
 def mysql(ctx, **kwargs):
     conf = ctx.obj.mysql
     common_conf = ctx.obj.common
     bcpid_stub(ctx, _mysql, ctx.obj.address(conf.server),
-                f"{common_conf.remote_dir}/mysql-server/build/bin/mysqld", **kwargs)
+                f"{common_conf.remote_dir}/bcpi-bench/mysql-server/build/bin/mysqld", **kwargs)
 
-def _mysql(ctx, monitor, pmc_stat):
+def _mysql(ctx, monitor):
     """
     Run the MySQL benchmark.
     """
@@ -558,17 +624,15 @@ def _mysql(ctx, monitor, pmc_stat):
     monitor.ssh_spawn(server, ["mkdir", "-p", conf.mysql.datadir])
 
     server_cmd = [
-        f"{common_conf.remote_dir}/mysql-server/build/bin/mysqld",
+        f"{common_conf.remote_dir}/bcpi-bench/mysql-server/build/bin/mysqld",
         "--no-defaults",
         f"--datadir={conf.mysql.datadir}",
-        f"--plugin-dir=f{common_conf.remote_dir}/{conf.mysql.plugin_dir}",
+        f"--plugin-dir={conf.mysql.plugin_dir}",
     ]
 
     monitor.ssh_spawn(server, server_cmd + ["--initialize-insecure"])
 
-    if pmc_stat:
-        server_cmd = ["pmc", "stat", "--"] + server_cmd
-    server_proc = monitor.ssh_spawn(server, server_cmd, bg=True)
+    server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
 
     sleep(5)
     logging.info(f"Creating test database")
@@ -591,6 +655,65 @@ def _mysql(ctx, monitor, pmc_stat):
     monitor.ssh_spawn(client, client_cmd + ["run"])
 
     logging.info(f"Terminating server on {server}")
-    monitor.ssh_spawn(server, ["killall", "mysqld"])
+    monitor.ssh_spawn(server, ["sudo", "killall", "mysqld"])
     
+    return True
+
+
+@cli.command()
+@click.pass_context
+def redis(ctx, **kwargs):
+    conf = ctx.obj.redis
+    common_conf = ctx.obj.common
+    bcpid_stub(ctx, _redis, ctx.obj.address(conf.server),
+                f"{common_conf.remote_dir}/bcpi-bench/redis/src/redis-server",**kwargs)
+
+def _redis(ctx, monitor):
+    """
+    Run the redis benchmark.
+    """
+
+    conf = ctx.obj
+    server = conf.address(conf.redis.server)
+    redis_exe = os.path.join(conf.common.remote_dir, "bcpi-bench/redis/src/redis-server")
+    memtier = os.path.join(conf.common.remote_dir, "bcpi-bench/memtier/memtier_benchmark")
+    client = conf.address(conf.redis.client)
+
+    logging.info(f"Terminating redis on {server}")
+    monitor.ssh_spawn(server, ["sudo", "killall", "-9","redis-server"], check=False)
+    logging.info(f"Terminating memtier on {client}")
+    monitor.ssh_spawn(client, ["sudo", "killall", "-9","memtier_benchmark"], check=False)
+
+    sleep(1)
+    logging.info(f"Starting redis on {server}")
+    server_cmd = [
+        redis_exe,
+        f"{conf.common.remote_dir}/bcpi-bench/redis.conf"
+    ]
+    server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
+
+    sleep(1)
+    logging.info(f"Pre-loading data on {server}")
+    monitor.ssh_spawn(server, [memtier, "-n", "allkeys", "-s", "localhost", "-R", "--key-pattern=P:P", "--ratio=1:0"])
+
+    logging.info(f"Starting client on {client}")
+    monitor.ssh_spawn(client, ["sudo", "rm", "-rf", conf.redis.prefix])
+    monitor.ssh_spawn(client, ["mkdir", "-p", conf.redis.prefix])
+    client_cmd = [
+        memtier,
+        "-s", server,
+        "-t", str(conf.redis.client_threads),
+        "-R",
+        "-c", str(conf.redis.client_connections),
+        f"--pipeline={conf.redis.depth}",
+        f"--test-time={conf.redis.duration}",
+        "-o", f"{conf.redis.prefix}/memtier.txt"
+    ]
+    monitor.ssh_spawn(client, client_cmd)
+
+    logging.info(f"Terminating memtier on {client}")
+    monitor.ssh_spawn(client, ["sudo", "killall", "-9", "memtier_benchmark"], check=False)
+    logging.info(f"Terminating redis on {server}")
+    monitor.ssh_spawn(server, ["sudo", "killall", "-9", "redis-server"], check=False)
+
     return True

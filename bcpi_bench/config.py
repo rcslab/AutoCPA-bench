@@ -7,6 +7,9 @@ Cluster configuration.
 from dataclasses import dataclass
 import toml
 from typing import Dict, List
+import jinja2
+import os
+import datetime
 
 
 @dataclass
@@ -27,6 +30,14 @@ class PkgConfig:
     pkg_rm: List[str]
 
 @dataclass
+class PmcConfig:
+    """
+    pmc config
+    """
+    counters: List[str]
+    counters_per_batch: int
+
+@dataclass
 class CommonConfig:
     """
     common config
@@ -41,10 +52,8 @@ class BcpidConfig:
     """
     bcpid config
     """
-    enable: int
     root_dir: str
     ghidra_proj_dir: str
-    analyze: int
     analyze_opts: str
     analyze_counter: str
     output_dir: str
@@ -128,6 +137,18 @@ class MysqlConfig:
     client: str
     client_threads: int
 
+@dataclass
+class RedisConfig:
+    """
+    Redis configuration.
+    """
+    prefix: str
+    client: str
+    server: str
+    duration: int
+    depth: int
+    client_threads: int
+    client_connections: int
 
 @dataclass
 class Config:
@@ -145,24 +166,42 @@ class Config:
     lighttpd: LighttpdConfig
     mysql: MysqlConfig
 
+    def render(self, doc):
+        return jinja2.Template(doc).render(conf=self._conf_obj)
+
     @classmethod
     def load(cls, file):
-        return cls(**toml.load(file))
+        buf = file.read()
+        obj = toml.loads(buf)
+
+        while True:
+            new_buf = jinja2.Template(buf).render(conf=obj)
+            if new_buf == buf:
+                break
+            buf = new_buf
+        
+        return cls(toml.loads(buf))
 
 
-    def __init__(self, servers, common, pkg, bcpid, memcached, nginx, rocksdb, lighttpd, mysql):
+    def __init__(self, toml_obj):
+        self._conf_obj = toml_obj
+
         self.servers = {}
-        for key, server in servers.items():
+        for key, server in toml_obj["servers"].items():
             self.servers[key] = Server(**server)
 
-        self.memcached = MemcachedConfig(**memcached)
-        self.nginx = NginxConfig(**nginx)
-        self.rocksdb = RocksdbConfig(**rocksdb)
-        self.common = CommonConfig(**common)
-        self.bcpid = BcpidConfig(**bcpid)
-        self.pkg = PkgConfig(**pkg)
-        self.lighttpd = LighttpdConfig(**lighttpd)
-        self.mysql = MysqlConfig(**mysql)
+        self.memcached = MemcachedConfig(**toml_obj["memcached"])
+        self.nginx = NginxConfig(**toml_obj["nginx"])
+        self.rocksdb = RocksdbConfig(**toml_obj["rocksdb"])
+        self.common = CommonConfig(**toml_obj["common"])
+        self.common.output_dir = str(os.path.abspath(os.path.expanduser(os.path.join(self.common.local_dir, datetime.datetime.now().strftime("%Y%m%d_%H%M%S")))))
+        self.bcpid = BcpidConfig(**toml_obj["bcpid"])
+        self.pkg = PkgConfig(**toml_obj["pkg"])
+        self.lighttpd = LighttpdConfig(**toml_obj["lighttpd"])
+        self.mysql = MysqlConfig(**toml_obj["mysql"])
+        self.redis = RedisConfig(**toml_obj["redis"])
+        self.pmc = PmcConfig(**toml_obj["pmc"])
+        self.pmc.prefix = []
 
     def address(self, server):
         """

@@ -12,7 +12,9 @@ all: \
 	ppd \
 	bcpi \
 	lighttpd \
-	mysql
+	mysql \
+	redis \
+	memtier
 
 .PHONY: clean clean-all
 clean clean-all: \
@@ -23,7 +25,9 @@ clean clean-all: \
 	clean-rocksdb \
 	clean-bcpi \
 	clean-lighttpd \
-	clean-mysql
+	clean-mysql \
+	clean-redis \
+	clean-memtier
 
 .PHONY: memcached
 memcached:
@@ -115,3 +119,25 @@ mysql:
 .PHONY: clean-mysql
 clean-mysql:
 	rm -rf ./mysql-server/build
+
+.PHONY: redis
+redis:
+	cd ./redis && \
+		$(GMAKE)
+
+.PHONY: clean-redis
+clean-redis:
+	cd ./redis && \
+		$(GMAKE) distclean
+
+.PHONY: memtier
+memtier:
+	cd ./memtier && \
+		autoreconf -ivf && \
+		./configure && \
+		$(GMAKE)
+
+.PHONY: clean-memtier
+clean-memtier:
+	cd ./memtier && \
+		$(GMAKE) clean
