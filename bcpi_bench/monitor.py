@@ -3,17 +3,20 @@
 """
 Process spawning monitoring.
 """
-import sys
-import os
-import shlex
+
+
+from .config import Config
+
 from contextlib import ExitStack
 from datetime import datetime
-from pathlib import Path, PurePath
-from .config import Config
-from .parser import *
-import subprocess
 import logging
+import os
+from pathlib import Path, PurePath
+import shlex
+import subprocess
+import sys
 from tempfile import NamedTemporaryFile, mkdtemp
+from typing import List
 
 
 class Monitor:
@@ -25,13 +28,10 @@ class Monitor:
         self._stack = ExitStack()
 
         time = datetime.utcnow().isoformat(sep="/")
-        self.config = config.common
-        
-        self._dir = os.path.join(self.config.output_dir, "monitor_logs")
+        self._dir = os.path.join(config.common.output_dir, "monitor_logs")
         os.makedirs(self._dir)
 
-    def _get_verbose(self) -> bool:
-        return self.config.monitor_verbose != 0
+        self._verbose = config.common.monitor_verbose
 
     def __enter__(self):
         self._stack.__enter__()
@@ -60,27 +60,23 @@ class Monitor:
         proc.wait()
         if proc.returncode != 0:
             raise RuntimeError(f"Process failed with status {proc.returncode}, args: {proc.args}")
-    
+
     def check_success_all(self, procs):
         for proc in procs:
             self.check_success(proc)
 
     def _spawn(self, command, name, bg=False, check=True) -> subprocess.Popen:
-        if self._get_verbose():
+        if self._verbose:
             logging.info(f"Monitor - spawning {command}. " + ("[bg]" if bg else "") + ("[chk]" if check else ""))
 
-        if bg:
+        if bg or not self._verbose:
             stdin = subprocess.DEVNULL
             stdout = NamedTemporaryFile(prefix=f"{name}.", suffix=".stdout", dir=self._dir, delete=False)
             stderr = NamedTemporaryFile(prefix=f"{name}.", suffix=".stderr", dir=self._dir, delete=False)
         else:
             stdin = None
-            if self._get_verbose():
-                stdout = sys.stdout
-                stderr = sys.stderr
-            else:
-                stdout = None
-                stderr = None
+            stdout = None
+            stderr = None
 
         proc = subprocess.Popen(command, stdin=stdin, stdout=stdout, stderr=stderr)
         proc.stdout = stdout
@@ -110,20 +106,32 @@ class Monitor:
         """
 
         cmd = ["ssh", "-o", "StrictHostKeyChecking=accept-new", "-tt"]
-        if not self._get_verbose():
+        if not self._verbose:
             cmd.append("-q")
-        cmd.extend([address, "--"])
-        for s in command:
-            cmd.append(shlex.quote(s))
+        cmd += [address, "--"]
+        cmd += [shlex.quote(arg) for arg in command]
+
         name = PurePath(command[0]).name
+
         return self._spawn(cmd, name=f"{address}.{name}", bg=bg, check=check)
 
-    def ssh_spawn_all(self, addresses, command, bg=False, check=True) -> [subprocess.Popen]:
+    def ssh_spawn_all(self, addresses, command, bg=False, check=True) -> List[subprocess.Popen]:
         """
         Run ssh commands for all addresses, returning an array of procs
         """
 
-        proc = []
+        each_bg = bg
+        if len(addresses) > 1:
+            each_bg = True
+
+        procs = []
         for addr in addresses:
-            proc.append(self.ssh_spawn(addr, command, bg=bg, check=check))
-        return proc
+            procs.append(self.ssh_spawn(addr, command, bg=each_bg, check=check))
+
+        if not bg:
+            if check:
+                self.check_success_all(procs)
+            else:
+                self.wait_all(procs)
+
+        return procs
