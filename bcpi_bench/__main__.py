@@ -82,7 +82,7 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
     analyze_counter = conf.bcpid.analyze_counter
     root_dir = conf.bcpid.root_dir
     bcpid_output_dir_prefix = conf.bcpid.output_dir
-    output_dir = conf.common.output_dir
+    output_dir = conf.output_dir
     bcpid_stop_cmd = ["sudo", "killall", "bcpid"]
     proj_name = Path(exe).name
 
@@ -195,10 +195,10 @@ def cli(ctx, conf, log, verbose, pmc, bcpid, analyze):
     config.pmc.enable = pmc
     config.bcpid.enable = bcpid
     config.bcpid.analyze = analyze
-    config.common.monitor_verbose = verbose
+    config.verbose = verbose
     ctx.obj = config
 
-    output_dir = Path(config.common.output_dir)
+    output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
@@ -255,7 +255,7 @@ def build(ctx, sync, build, clean, server, targets):
 
     conf = ctx.obj
 
-    remote_dir = f"{conf.common.remote_dir}/bcpi-bench"
+    remote_dir = f"{conf.remote_dir}/bcpi-bench"
 
     if len(targets) == 0:
         targets = []
@@ -295,23 +295,21 @@ def rocksdb(ctx, **kwargs):
     Run the rocksdb benchmark.
     """
 
-    conf = ctx.obj.rocksdb
-    common_conf = ctx.obj.common
-    bcpid_stub(ctx, _rocksdb, ctx.obj.address(conf.server),
-                f"{common_conf.remote_dir}/bcpi-bench/kqsched/pingpong/build/ppd", **kwargs)
+    conf = ctx.obj
+    bcpid_stub(ctx, _rocksdb, conf.address(conf.rocksdb.server),
+                f"{conf.remote_dir}/bcpi-bench/kqsched/pingpong/build/ppd", **kwargs)
 
 def _rocksdb(ctx, monitor):
     success = False
     conf = ctx.obj
     rdb_conf = conf.rocksdb
-    common_conf = conf.common
-    sample_output = f"{common_conf.remote_dir}/bcpi-bench/kqsched/pingpong/build/sample.txt"
-    local_sample = f"{common_conf.output_dir}/rocksdb_sample.txt"
+    sample_output = f"{conf.remote_dir}/bcpi-bench/kqsched/pingpong/build/sample.txt"
+    local_sample = f"{conf.output_dir}/rocksdb_sample.txt"
 
     server = conf.address(rdb_conf.server)
     master = conf.address(rdb_conf.master)
-    ppd_exe = f"{common_conf.remote_dir}/bcpi-bench/kqsched/pingpong/build/ppd"
-    dismember_exe = f"{common_conf.remote_dir}/bcpi-bench/kqsched/pingpong/build/dismember"
+    ppd_exe = f"{conf.remote_dir}/bcpi-bench/kqsched/pingpong/build/ppd"
+    dismember_exe = f"{conf.remote_dir}/bcpi-bench/kqsched/pingpong/build/dismember"
     affinity = int(rdb_conf.affinity) != 0
     full_addresses = [server, master]
     for client in rdb_conf.clients:
@@ -442,16 +440,15 @@ def memcached(ctx, **kwargs):
     Run the memcached benchmark.
     """
 
-    conf = ctx.obj.memcached
-    common_conf = ctx.obj.common
-    bcpid_stub(ctx, _memcached, ctx.obj.address(conf.server),
-                f"{common_conf.remote_dir}/bcpi-bench/memcached/memcached", **kwargs)
+    conf = ctx.obj
+    bcpid_stub(ctx, _memcached, conf.address(conf.memcached.server),
+                f"{conf.remote_dir}/bcpi-bench/memcached/memcached", **kwargs)
 
 def _memcached(ctx, monitor):
     conf = ctx.obj
     server = conf.address(conf.memcached.server)
-    memcached_exe = f"{conf.common.remote_dir}/bcpi-bench/memcached/memcached"
-    mutilate_exe = f"{conf.common.remote_dir}/bcpi-bench/mutilate/mutilate"
+    memcached_exe = f"{conf.remote_dir}/bcpi-bench/memcached/memcached"
+    mutilate_exe = f"{conf.remote_dir}/bcpi-bench/mutilate/mutilate"
 
     monitor.ssh_spawn(server, ["killall", "memcached"], check=False)
 
@@ -519,14 +516,12 @@ def nginx(ctx, **kwargs):
     Run the nginx benchmark.
     """
 
-    conf = ctx.obj.nginx
-    common_conf = ctx.obj.common
-    bcpid_stub(ctx, _nginx, ctx.obj.address(conf.server),
-                f"{common_conf.remote_dir}/bcpi-bench/nginx/objs/nginx", **kwargs)
+    conf = ctx.obj
+    bcpid_stub(ctx, _nginx, conf.address(conf.nginx.server),
+                f"{conf.remote_dir}/bcpi-bench/nginx/objs/nginx", **kwargs)
 
 def _nginx(ctx, monitor):
     conf = ctx.obj
-    common_conf = conf.common
     server = conf.address(conf.nginx.server)
 
     # Set up the nginx working directory
@@ -534,10 +529,10 @@ def _nginx(ctx, monitor):
     monitor.ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
     monitor.ssh_spawn(server, ["mkdir", "-p", conf.nginx.prefix + "/conf", conf.nginx.prefix + "/logs"])
     remote_render(ctx, monitor, f"{ROOT_DIR}/nginx.conf", server, conf.nginx.prefix + "/conf/nginx.conf")
-    monitor.ssh_spawn(server, ["cp", f"{common_conf.remote_dir}/bcpi-bench/nginx/docs/html/index.html", conf.nginx.prefix])
+    monitor.ssh_spawn(server, ["cp", f"{conf.remote_dir}/bcpi-bench/nginx/docs/html/index.html", conf.nginx.prefix])
 
     server_cmd = [
-        f"{common_conf.remote_dir}/bcpi-bench/nginx/objs/nginx",
+        f"{conf.remote_dir}/bcpi-bench/nginx/objs/nginx",
         "-e", "stderr",
         "-p", conf.nginx.prefix,
     ]
@@ -567,25 +562,23 @@ def lighttpd(ctx, **kwargs):
     Run the lighttpd benchmark.
     """
 
-    conf = ctx.obj.lighttpd
-    common_conf = ctx.obj.common
-    bcpid_stub(ctx, _lighttpd, ctx.obj.address(conf.server),
-                f"{common_conf.remote_dir}/bcpi-bench/lighttpd/sconsbuild/static/build/lighttpd", **kwargs)
+    conf = ctx.obj
+    bcpid_stub(ctx, _lighttpd, conf.address(conf.lighttpd.server),
+                f"{conf.remote_dir}/bcpi-bench/lighttpd/sconsbuild/static/build/lighttpd", **kwargs)
 
 def _lighttpd(ctx, monitor):
     conf = ctx.obj
-    conf_common = conf.common
     server = conf.address(conf.lighttpd.server)
 
     # Set up the lighttpd working directory
     logging.info(f"Starting lighttpd on {server}")
     monitor.ssh_spawn(server, ["rm", "-rf", conf.lighttpd.webroot])
     monitor.ssh_spawn(server, ["mkdir", "-p", conf.lighttpd.webroot])
-    monitor.ssh_spawn(server, ["cp", f"{conf_common.remote_dir}/bcpi-bench/lighttpd/tests/docroot/www/index.html", conf.lighttpd.webroot])
+    monitor.ssh_spawn(server, ["cp", f"{conf.remote_dir}/bcpi-bench/lighttpd/tests/docroot/www/index.html", conf.lighttpd.webroot])
     remote_render(ctx, monitor, f"{ROOT_DIR}/lighttpd.conf", server, conf.lighttpd.webroot + "/lighttpd.conf")
 
     server_cmd = [
-        f"{conf_common.remote_dir}/bcpi-bench/lighttpd/sconsbuild/static/build/lighttpd",
+        f"{conf.remote_dir}/bcpi-bench/lighttpd/sconsbuild/static/build/lighttpd",
         "-f", f"{conf.lighttpd.webroot}/lighttpd.conf",
         "-D",
     ]
@@ -615,14 +608,12 @@ def mysql(ctx, **kwargs):
     Run the MySQL benchmark.
     """
 
-    conf = ctx.obj.mysql
-    common_conf = ctx.obj.common
-    bcpid_stub(ctx, _mysql, ctx.obj.address(conf.server),
-                f"{common_conf.remote_dir}/bcpi-bench/mysql-server/build/bin/mysqld", **kwargs)
+    conf = ctx.obj
+    bcpid_stub(ctx, _mysql, conf.address(conf.mysql.server),
+                f"{conf.remote_dir}/bcpi-bench/mysql-server/build/bin/mysqld", **kwargs)
 
 def _mysql(ctx, monitor):
     conf = ctx.obj
-    common_conf = ctx.obj.common
     server = conf.address(conf.lighttpd.server)
 
     logging.info(f"Starting mysql on {server}")
@@ -630,7 +621,7 @@ def _mysql(ctx, monitor):
     monitor.ssh_spawn(server, ["mkdir", "-p", conf.mysql.datadir])
 
     server_cmd = [
-        f"{common_conf.remote_dir}/bcpi-bench/mysql-server/build/bin/mysqld",
+        f"{conf.remote_dir}/bcpi-bench/mysql-server/build/bin/mysqld",
         "--no-defaults",
         f"--datadir={conf.mysql.datadir}",
         f"--plugin-dir={conf.mysql.plugin_dir}",
@@ -673,16 +664,15 @@ def redis(ctx, **kwargs):
     Run the redis benchmark.
     """
 
-    conf = ctx.obj.redis
-    common_conf = ctx.obj.common
-    bcpid_stub(ctx, _redis, ctx.obj.address(conf.server),
-                f"{common_conf.remote_dir}/bcpi-bench/redis/src/redis-server",**kwargs)
+    conf = ctx.obj
+    bcpid_stub(ctx, _redis, conf.address(conf.redis.server),
+                f"{conf.remote_dir}/bcpi-bench/redis/src/redis-server",**kwargs)
 
 def _redis(ctx, monitor):
     conf = ctx.obj
     server = conf.address(conf.redis.server)
-    redis_exe = f"{conf.common.remote_dir}/bcpi-bench/redis/src/redis-server"
-    memtier = f"{conf.common.remote_dir}/bcpi-bench/memtier/memtier_benchmark"
+    redis_exe = f"{conf.remote_dir}/bcpi-bench/redis/src/redis-server"
+    memtier = f"{conf.remote_dir}/bcpi-bench/memtier/memtier_benchmark"
     client = conf.address(conf.redis.client)
 
     logging.info(f"Terminating redis on {server}")
@@ -694,7 +684,7 @@ def _redis(ctx, monitor):
     logging.info(f"Starting redis on {server}")
     server_cmd = [
         redis_exe,
-        f"{conf.common.remote_dir}/bcpi-bench/redis.conf"
+        f"{conf.remote_dir}/bcpi-bench/redis.conf"
     ]
     server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
 

@@ -22,6 +22,7 @@ class Server:
 
     address: str
 
+
 @dataclass
 class PkgConfig:
     """
@@ -31,6 +32,7 @@ class PkgConfig:
     pkg: List[str]
     pkg_rm: List[str]
 
+
 @dataclass
 class PmcConfig:
     """
@@ -39,15 +41,6 @@ class PmcConfig:
     counters: List[str]
     counters_per_batch: int
 
-@dataclass
-class CommonConfig:
-    """
-    common config
-    """
-
-    remote_dir: str
-    local_dir: str
-    monitor_verbose: int
 
 @dataclass
 class BcpidConfig:
@@ -59,6 +52,7 @@ class BcpidConfig:
     analyze_opts: str
     analyze_counter: str
     output_dir: str
+
 
 @dataclass
 class MemcachedConfig:
@@ -89,6 +83,7 @@ class NginxConfig:
     client_threads: int
     connections: int
     duration: float
+
 
 @dataclass
 class RocksdbConfig:
@@ -139,6 +134,7 @@ class MysqlConfig:
     client: str
     client_threads: int
 
+
 @dataclass
 class RedisConfig:
     """
@@ -152,18 +148,24 @@ class RedisConfig:
     client_threads: int
     client_connections: int
 
+
 @dataclass
 class Config:
     """
     bcpi_bench configuration (see cluster.conf).
     """
 
+    local_dir: str
+    output_dir: str
+    remote_dir: str
+    verbose: bool
+
     servers: Dict[str, Server]
+
     memcached: MemcachedConfig
     nginx: NginxConfig
     rocksdb: RocksdbConfig
     bcpid: BcpidConfig
-    common: CommonConfig
     pkg: PkgConfig
     lighttpd: LighttpdConfig
     mysql: MysqlConfig
@@ -187,6 +189,13 @@ class Config:
     def __init__(self, toml_obj):
         self._conf_obj = toml_obj
 
+        self.local_dir = toml_obj["local_dir"]
+        self.remote_dir = toml_obj["remote_dir"]
+        self.verbose = toml_obj.get("verbose", False)
+
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.output_dir = str(Path(f"{self.local_dir}/{now}").expanduser().resolve())
+
         self.servers = {}
         for key, server in toml_obj["servers"].items():
             self.servers[key] = Server(**server)
@@ -194,10 +203,6 @@ class Config:
         self.memcached = MemcachedConfig(**toml_obj["memcached"])
         self.nginx = NginxConfig(**toml_obj["nginx"])
         self.rocksdb = RocksdbConfig(**toml_obj["rocksdb"])
-
-        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.common = CommonConfig(**toml_obj["common"])
-        self.common.output_dir = str(Path(f"{self.common.local_dir}/{now}").expanduser().resolve())
 
         self.bcpid = BcpidConfig(**toml_obj["bcpid"])
         self.pkg = PkgConfig(**toml_obj["pkg"])

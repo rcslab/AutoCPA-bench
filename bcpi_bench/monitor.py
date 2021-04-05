@@ -28,10 +28,10 @@ class Monitor:
         self._stack = ExitStack()
 
         time = datetime.utcnow().isoformat(sep="/")
-        self._dir = Path(config.common.output_dir)/"monitor_logs"
+        self._dir = Path(config.output_dir)/"monitor_logs"
         self._dir.mkdir(parents=True, exist_ok=True)
 
-        self._verbose = config.common.monitor_verbose
+        self._verbose = config.verbose
 
     def __enter__(self):
         self._stack.__enter__()
