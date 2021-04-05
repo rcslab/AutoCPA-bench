@@ -5,29 +5,29 @@ SCONS2 := scons-2.7
 
 .PHONY: all
 all: \
-	memcached \
-	mutilate \
-	nginx \
-	rocksdb \
-	ppd \
-	bcpi \
-	lighttpd \
-	mysql \
-	redis \
-	memtier
+    memcached \
+    mutilate \
+    nginx \
+    rocksdb \
+    ppd \
+    bcpi \
+    lighttpd \
+    mysql \
+    redis \
+    memtier
 
 .PHONY: clean clean-all
 clean clean-all: \
-	clean-memcached \
-	clean-mutilate \
-	clean-nginx \
-	clean-ppd \
-	clean-rocksdb \
-	clean-bcpi \
-	clean-lighttpd \
-	clean-mysql \
-	clean-redis \
-	clean-memtier
+    clean-memcached \
+    clean-mutilate \
+    clean-nginx \
+    clean-ppd \
+    clean-rocksdb \
+    clean-bcpi \
+    clean-lighttpd \
+    clean-mysql \
+    clean-redis \
+    clean-memtier
 
 .PHONY: memcached
 memcached:
@@ -65,21 +65,21 @@ clean-nginx:
 .PHONY: rocksdb
 rocksdb:
 	cd ./rocksdb \
-		&& $(GMAKE) static_lib -j48 \
-		&& sudo $(GMAKE) install
+	    && $(GMAKE) static_lib -j48 \
+	    && sudo $(GMAKE) install
 
 .PHONY: clean-rocksdb
 clean-rocksdb:
 	cd ./rocksdb \
-		&& $(GMAKE) clean
+	    && $(GMAKE) clean
 
 .PHONY: ppd
 ppd:
 	cd ./kqsched/pingpong \
-		&& mkdir -p build \
-		&& cd build \
-		&& cmake .. \
-		&& $(MAKE)
+	    && mkdir -p build \
+	    && cd build \
+	    && $(CMAKE) .. \
+	    && $(MAKE)
 
 .PHONY: clean-ppd
 clean-ppd:
@@ -88,12 +88,12 @@ clean-ppd:
 .PHONY: bcpi
 bcpi:
 	cd ./bcpi \
-	&& make
+	    && $(MAKE)
 
 .PHONY: clean-bcpi
 clean-bcpi:
 	cd ./bcpi \
-	&& make clean
+	    && $(MAKE) clean
 
 .PHONY: lighttpd
 lighttpd:
@@ -123,21 +123,21 @@ clean-mysql:
 .PHONY: redis
 redis:
 	cd ./redis && \
-		$(GMAKE)
+	    $(GMAKE)
 
 .PHONY: clean-redis
 clean-redis:
 	cd ./redis && \
-		$(GMAKE) distclean
+	    $(GMAKE) distclean
 
 .PHONY: memtier
 memtier:
-	cd ./memtier && \
-		autoreconf -ivf && \
-		./configure && \
-		$(GMAKE)
+	cd ./memtier \
+	    && (test -e ./configure || autoreconf -ivf) \
+	    && (test -e ./Makefile || ./configure) \
+	    && $(GMAKE)
 
 .PHONY: clean-memtier
 clean-memtier:
-	cd ./memtier && \
-		$(GMAKE) clean
+	cd ./memtier \
+	    && $(GMAKE) clean
