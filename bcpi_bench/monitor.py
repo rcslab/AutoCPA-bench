@@ -9,14 +9,14 @@ from .config import Config
 
 from contextlib import ExitStack
 from datetime import datetime
-import logging
-import os
 from pathlib import Path, PurePath
+from tempfile import NamedTemporaryFile, mkdtemp
+from typing import List
+
+import logging
 import shlex
 import subprocess
 import sys
-from tempfile import NamedTemporaryFile, mkdtemp
-from typing import List
 
 
 class Monitor:
@@ -28,8 +28,8 @@ class Monitor:
         self._stack = ExitStack()
 
         time = datetime.utcnow().isoformat(sep="/")
-        self._dir = os.path.join(config.common.output_dir, "monitor_logs")
-        os.makedirs(self._dir)
+        self._dir = Path(config.common.output_dir)/"monitor_logs"
+        self._dir.mkdir(parents=True, exist_ok=True)
 
         self._verbose = config.common.monitor_verbose
 

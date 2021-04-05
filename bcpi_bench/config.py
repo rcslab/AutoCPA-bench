@@ -5,11 +5,13 @@ Cluster configuration.
 """
 
 from dataclasses import dataclass
-import toml
+from pathlib import Path
 from typing import Dict, List
+
+import datetime
 import jinja2
 import os
-import datetime
+import toml
 
 
 @dataclass
@@ -179,9 +181,8 @@ class Config:
             if new_buf == buf:
                 break
             buf = new_buf
-        
-        return cls(toml.loads(buf))
 
+        return cls(toml.loads(buf))
 
     def __init__(self, toml_obj):
         self._conf_obj = toml_obj
@@ -193,8 +194,11 @@ class Config:
         self.memcached = MemcachedConfig(**toml_obj["memcached"])
         self.nginx = NginxConfig(**toml_obj["nginx"])
         self.rocksdb = RocksdbConfig(**toml_obj["rocksdb"])
+
+        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.common = CommonConfig(**toml_obj["common"])
-        self.common.output_dir = str(os.path.abspath(os.path.expanduser(os.path.join(self.common.local_dir, datetime.datetime.now().strftime("%Y%m%d_%H%M%S")))))
+        self.common.output_dir = str(Path(f"{self.common.local_dir}/{now}").expanduser().resolve())
+
         self.bcpid = BcpidConfig(**toml_obj["bcpid"])
         self.pkg = PkgConfig(**toml_obj["pkg"])
         self.lighttpd = LighttpdConfig(**toml_obj["lighttpd"])
