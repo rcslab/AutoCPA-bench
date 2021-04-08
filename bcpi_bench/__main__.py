@@ -454,6 +454,7 @@ def _memcached(ctx, monitor):
     mutilate_exe = f"{conf.remote_dir}/bcpi-bench/mutilate/mutilate"
 
     monitor.ssh_spawn(server, ["killall", "memcached"], check=False)
+    sleep(1)
 
     logging.info(f"Starting memcached on {server}")
     server_cmd = [
