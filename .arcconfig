@@ -1,4 +1,5 @@
 {
   "phabricator.uri" : "https://review.rcs.uwaterloo.ca",
-  "history.immutable" : true
+  "history.immutable" : true,
+  "arc.land.strategy" : "merge"
 }

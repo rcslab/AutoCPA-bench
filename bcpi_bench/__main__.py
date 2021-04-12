@@ -38,12 +38,15 @@ def remote_render(ctx, mon, input, server, output):
         mon.spawn(["scp", f.name, f"{server}:{output}"])
 
 
-def pmc_loop(ctx, mon, func, **kwargs):
+def pmc_loop(ctx, mon, server, func, **kwargs):
     conf = ctx.obj
     pmc_idx = 0
 
     if (len(conf.pmc.counters) == 0 or conf.pmc.counters_per_batch <= 0):
         raise Exception("No pmc counters defined or invalid counters per batch #.")
+
+    mon.ssh_spawn(server, ["sudo", "sysctl", "security.bsd.unprivileged_proc_debug=1"])
+    mon.ssh_spawn(server, ["sudo", "sysctl", "security.bsd.unprivileged_syspmcs=1"])
 
     while pmc_idx < len(conf.pmc.counters):
         # passing pmc prefix like this is pretty hacky
@@ -52,7 +55,7 @@ def pmc_loop(ctx, mon, func, **kwargs):
         #      and for normal runs we pass a Monitor with empty prefix
         # but this breaks Monitor's modularity a bit
         conf.pmc.prefix.clear()
-        conf.pmc.prefix.extend(["sudo", "pmc", "stat", "-j"])
+        conf.pmc.prefix.extend(["pmc", "stat", "-j"])
         pmc_batch_items = min(len(conf.pmc.counters) - pmc_idx, conf.pmc.counters_per_batch)
 
         pmc_batch_str = ""
@@ -162,7 +165,7 @@ def bcpid_stub(ctx, func, server, exe, **kwargs):
     with Monitor(ctx.obj) as mon:
         if conf.pmc.enable:
             logging.info("Running pmc loop...")
-            pmc_loop(ctx, mon, func, **kwargs)
+            pmc_loop(ctx, mon, server, func, **kwargs)
         if conf.bcpid.enable:
             logging.info("Running bcpid loop...")
             bcpid_loop(ctx, mon, func, server, exe, **kwargs)
@@ -451,6 +454,7 @@ def _memcached(ctx, monitor):
     mutilate_exe = f"{conf.remote_dir}/bcpi-bench/mutilate/mutilate"
 
     monitor.ssh_spawn(server, ["killall", "memcached"], check=False)
+    sleep(1)
 
     logging.info(f"Starting memcached on {server}")
     server_cmd = [
