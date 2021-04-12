@@ -33,13 +33,14 @@ clean clean-all: \
 memcached:
 	cd ./memcached \
 	    && (test -e ./configure || ./autogen.sh) \
-	    && (test -e ./Makefile || ./configure) \
+	    && (test -e ./Makefile || ./configure LDFLAGS=-Wl,--build-id=sha1) \
 	    && $(MAKE)
 
 .PHONY: clean-memcached
 clean-memcached:
 	cd ./memcached \
-	    && $(MAKE) clean
+	    && (! test -e ./Makefile || $(MAKE) clean) \
+		&& rm -f Makefile
 
 .PHONY: mutilate
 mutilate:
@@ -60,7 +61,7 @@ nginx:
 .PHONY: clean-nginx
 clean-nginx:
 	cd ./nginx \
-	    && $(MAKE) clean
+	    && (! test -e ./Makefile || $(MAKE) clean)
 
 .PHONY: rocksdb
 rocksdb:
@@ -76,10 +77,10 @@ clean-rocksdb:
 .PHONY: ppd
 ppd:
 	cd ./kqsched/pingpong \
-	    && mkdir -p build \
-	    && cd build \
-	    && $(CMAKE) .. \
-	    && $(MAKE)
+		&& mkdir -p build \
+		&& cd build \
+		&& LDFLAGS="-Wl,--build-id=sha1" cmake .. \
+		&& $(MAKE)
 
 .PHONY: clean-ppd
 clean-ppd:
@@ -98,7 +99,7 @@ clean-bcpi:
 .PHONY: lighttpd
 lighttpd:
 	cd ./lighttpd \
-	    && $(SCONS) build_static=1 build_dynamic=0
+	    && LDFLAGS="-Wl,--build-id=sha1" $(SCONS) build_static=1 build_dynamic=0
 
 .PHONY: clean-lighttpd
 clean-lighttpd:
@@ -110,6 +111,7 @@ mysql:
 	mkdir -p ./mysql-server/build \
 	    && cd ./mysql-server/build \
 	    && $(CMAKE) .. \
+			-DCMAKE_EXE_LINKER_FLAGS="-Wl,--build-id=sha1" \
 	        -DBUILD_CONFIG=mysql_release \
 	        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 	        -DDOWNLOAD_BOOST=1 \
@@ -123,7 +125,7 @@ clean-mysql:
 .PHONY: redis
 redis:
 	cd ./redis && \
-	    $(GMAKE)
+		CFLAGS="-g" LDFLAGS="-Wl,--build-id=sha1" $(GMAKE)
 
 .PHONY: clean-redis
 clean-redis:
@@ -139,5 +141,5 @@ memtier:
 
 .PHONY: clean-memtier
 clean-memtier:
-	cd ./memtier \
-	    && $(GMAKE) clean
+	cd ./memtier && \
+		(! test -e ./Makefile || $(GMAKE) clean)

@@ -5,7 +5,7 @@
 
 LINK="\$(CC)"
 
-MAIN_LINK=
+MAIN_LINK=""
 MODULE_LINK="-shared"
 
 ngx_include_opt="-I "
@@ -174,7 +174,7 @@ if [ "$NGX_PLATFORM" != win32 ]; then
     . auto/feature
 
     if [ $ngx_found = yes ]; then
-        MAIN_LINK="-Wl,-E"
+        MAIN_LINK="-Wl,-E -Wl,--build-id=sha1"
     fi
 
 
