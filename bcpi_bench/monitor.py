@@ -8,7 +8,6 @@ Process spawning monitoring.
 from .config import Config
 
 from contextlib import ExitStack
-from datetime import datetime
 from pathlib import Path, PurePath
 from tempfile import NamedTemporaryFile, mkdtemp
 from typing import List
@@ -27,7 +26,6 @@ class Monitor:
     def __init__(self, config: Config):
         self._stack = ExitStack()
 
-        time = datetime.utcnow().isoformat(sep="/")
         self._dir = Path(config.output_dir)/"monitor_logs"
         self._dir.mkdir(parents=True, exist_ok=True)
 

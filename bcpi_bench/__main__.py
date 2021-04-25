@@ -102,8 +102,8 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
         mon.wait(stop_proc)
 
         # start bcpid
-        bcpid_start_cmd  = ["sh", "-c", f"sudo mkdir -p {bcpid_output_dir} && cd {root_dir} && " +
-                            f"sudo bcpid/bcpid -f -o {bcpid_output_dir}"]
+        bcpid_start_cmd  = ["sh", "-c", f"mkdir -p {bcpid_output_dir} && cd {root_dir} && " +
+                            f"bcpid/bcpid -f -o {bcpid_output_dir}"]
 
         logging.info("Starting bcpid...")
         proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
@@ -136,7 +136,7 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
             success = False
         else:
             if analyze:
-                extract_cmd = [ "sh", "-c", f"cd {root_dir} && sudo bcpiquery/bcpiquery extract -c {analyze_counter}" +
+                extract_cmd = [ "sh", "-c", f"cd {root_dir} && bcpiquery/bcpiquery extract -c {analyze_counter}" +
                     f"-p {bcpid_output_dir} -o {exe}"]
 
                 logging.info("Extracting address info...")
@@ -147,9 +147,9 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
                 mon.spawn(addr_info_scp_cmd)
 
                 logging.info("Analyzing...")
-                analyze_cmd = [ "sh", "-c", f"sudo mkdir -p {proj_dir} && " +
+                analyze_cmd = [ "sh", "-c", f"mkdir -p {proj_dir} && " +
                                 f"cd {root_dir} && " +
-                                f"sudo scripts/analyze.sh {proj_dir} {root_dir}/address_info.csv {exe}"]
+                                f"scripts/analyze.sh {proj_dir} {root_dir}/address_info.csv {exe}"]
                 if len(analyze_opts) > 0:
                     analyze_cmd.append(analyze_opts)
                 mon.ssh_spawn(server, analyze_cmd)

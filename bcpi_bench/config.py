@@ -5,10 +5,10 @@ Cluster configuration.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
-import datetime
 import jinja2
 import os
 import toml
@@ -193,7 +193,7 @@ class Config:
         self.remote_dir = toml_obj["remote_dir"]
         self.verbose = toml_obj.get("verbose", False)
 
-        now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        now = datetime.utcnow().isoformat(sep="/")
         self.output_dir = str(Path(f"{self.local_dir}/{now}").expanduser().resolve())
 
         self.servers = {}
