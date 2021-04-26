@@ -245,13 +245,14 @@ def exec(ctx, server, command):
         monitor.ssh_spawn(address, command)
 
 @cli.command()
-@click.option("--sync/--no-sync", default=True, help="Sync the code to the server (Default true)")
-@click.option("--build/--no-build", default=True, help="Build the code to the server (Default true)")
-@click.option("--clean/--no-clean", default=False, help="Clean the code to the server (Default false)")
-@click.option('--server', default=None, help="Overwrite the default server list (Default conf.pkg.servers)")
+@click.option("--sync/--no-sync", default=True, help="Sync the code to the server (default: true)")
+@click.option("--patch/--no-patch", default=False, type=bool, help="Apply patches to the code (default: false)")
+@click.option("--build/--no-build", default=True, help="Build the code on the server (default: true)")
+@click.option("--clean/--no-clean", default=False, help="Clean the code on the server (default: false)")
+@click.option('--server', default=None, help="Override the default server list (default: conf.pkg.servers)")
 @click.argument('targets', nargs=-1)
 @click.pass_context
-def build(ctx, sync, build, clean, server, targets):
+def build(ctx, sync, patch, build, clean, server, targets):
     """
     Build the code on a server. Default targets: all
     """
@@ -281,6 +282,11 @@ def build(ctx, sync, build, clean, server, targets):
             for addr in full_addresses:
                 procs.append(monitor.spawn(["rsync", "-az", "--info=progress2", "--exclude=.git", f"{ROOT_DIR}/.", f"{addr}:{remote_dir}"], bg=rsync_bg, check=False))
             monitor.check_success_all(procs)
+
+        if patch:
+            logging.info(f"Applying patches...")
+            for patch in (ROOT_DIR/"patches").iterdir():
+                monitor.ssh_spawn_all(full_addresses, ["patch", "-s", "-p1", "-d", f"{remote_dir}", "-i", f"patches/{patch.name}"])
 
         if clean:
             logging.info(f"Cleaning...")
