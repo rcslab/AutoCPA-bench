@@ -79,7 +79,7 @@ class NginxConfig:
     config: str
     prefix: str
     server: str
-    client: str
+    clients: List[str]
     client_threads: int
     connections: int
     duration: float
@@ -116,7 +116,7 @@ class LighttpdConfig:
     config: str
     webroot: str
     server: str
-    client: str
+    clients: List[str]
     client_threads: int
     connections: int
     duration: float
@@ -131,7 +131,7 @@ class MysqlConfig:
     datadir: str
     plugin_dir: str
     server: str
-    client: str
+    clients: List[str]
     client_threads: int
 
 
@@ -141,7 +141,7 @@ class RedisConfig:
     Redis configuration.
     """
     prefix: str
-    client: str
+    clients: List[str]
     server: str
     duration: int
     depth: int

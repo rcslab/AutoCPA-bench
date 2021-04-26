@@ -63,22 +63,33 @@ class Monitor:
         for proc in procs:
             self.check_success(proc)
 
-    def _spawn(self, command, name, bg=False, check=True) -> subprocess.Popen:
+    def _spawn(self, command, name, bg=False, check=True, stdout_override=None, stderr_override=None) -> subprocess.Popen:
         if self._verbose:
             logging.info(f"Monitor - spawning {command}. " + ("[bg]" if bg else "") + ("[chk]" if check else ""))
 
         if bg or not self._verbose:
             stdin = subprocess.DEVNULL
-            stdout = NamedTemporaryFile(prefix=f"{name}.", suffix=".stdout", dir=self._dir, delete=False)
-            stderr = NamedTemporaryFile(prefix=f"{name}.", suffix=".stderr", dir=self._dir, delete=False)
+            # Don't create temp files if we are overriding
+            command_str = ' '.join(map(str, command)) + "\n"
+            if stdout_override == None:
+                f = NamedTemporaryFile(prefix=f"{name}.", suffix=".stdout", dir=self._dir, delete=False)
+                f.write(command_str.encode())
+                stdout = f
+            if stderr_override == None:
+                f = NamedTemporaryFile(prefix=f"{name}.", suffix=".stderr", dir=self._dir, delete=False)
+                f.write(command_str.encode())
+                stderr = f
         else:
             stdin = None
             stdout = None
             stderr = None
 
+        if stdout_override != None:
+            stdout = stdout_override
+        if stderr_override != None:
+            stderr = stderr_override
+
         proc = subprocess.Popen(command, stdin=stdin, stdout=stdout, stderr=stderr)
-        proc.stdout = stdout
-        proc.stderr = stderr
 
         if bg:
             self._stack.enter_context(proc)
@@ -90,15 +101,15 @@ class Monitor:
 
         return proc
 
-    def spawn(self, command, bg=False, check=True) -> subprocess.Popen:
+    def spawn(self, command, bg=False, check=True, stdout_override=None, stderr_override=None) -> subprocess.Popen:
         """
         Run a command.
         """
 
         name = PurePath(command[0]).name
-        return self._spawn(command, name=name, bg=bg, check=check)
+        return self._spawn(command, name=name, bg=bg, check=check, stdout_override=stdout_override, stderr_override=stderr_override)
 
-    def ssh_spawn(self, address, command, bg=False, check=True) -> subprocess.Popen:
+    def ssh_spawn(self, address, command, bg=False, check=True, stdout_override=None, stderr_override=None) -> subprocess.Popen:
         """
         Run a command over ssh.
         """
@@ -111,7 +122,7 @@ class Monitor:
 
         name = PurePath(command[0]).name
 
-        return self._spawn(cmd, name=f"{address}.{name}", bg=bg, check=check)
+        return self._spawn(cmd, name=f"{address}.{name}", bg=bg, check=check, stdout_override=stdout_override, stderr_override=stderr_override)
 
     def ssh_spawn_all(self, addresses, command, bg=False, check=True) -> List[subprocess.Popen]:
         """

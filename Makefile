@@ -32,8 +32,8 @@ clean clean-all: \
 .PHONY: memcached
 memcached:
 	cd ./memcached \
-	    && (test -e ./configure || ./autogen.sh) \
-	    && (test -e ./Makefile || ./configure LDFLAGS=-Wl,--build-id=sha1) \
+	    && ./autogen.sh \
+	    && ./configure LDFLAGS=-Wl,--build-id=sha1 \
 	    && $(MAKE)
 
 .PHONY: clean-memcached
@@ -135,11 +135,12 @@ clean-redis:
 .PHONY: memtier
 memtier:
 	cd ./memtier \
-	    && (test -e ./configure || autoreconf -ivf) \
-	    && (test -e ./Makefile || ./configure) \
+	    && autoreconf -ivf \
+	    && ./configure \
 	    && $(GMAKE)
 
 .PHONY: clean-memtier
 clean-memtier:
 	cd ./memtier && \
-		(! test -e ./Makefile || $(GMAKE) clean)
+		(! test -e ./Makefile || $(GMAKE) clean) && \
+		rm -rf ./Makefile

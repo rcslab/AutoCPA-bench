@@ -14,6 +14,7 @@ import logging
 import os
 import subprocess
 import sys
+import shutil
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -75,11 +76,15 @@ def pmc_loop(ctx, mon, server, func, **kwargs):
     # clear pmc settings for runs without pmc
     conf.pmc.prefix.clear()
 
+def get_buildid(mon, server, exe) -> str:
+    buildid_cmd = ["sh", "-c", f"eu-readelf -n \"{exe}\" | grep \"Build ID\" | sed -E \"s/.*Build ID: (.*)/\\1/g\""]
+    buildid_proc = mon.ssh_spawn(server, buildid_cmd, stdout_override=subprocess.PIPE)
+    return buildid_proc.communicate()[0].decode().strip()
+
 def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
     conf = ctx.obj
 
     success = False
-    proj_dir = conf.bcpid.ghidra_proj_dir
     analyze = conf.bcpid.analyze
     analyze_opts = conf.bcpid.analyze_opts
     analyze_counter = conf.bcpid.analyze_counter
@@ -88,6 +93,14 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
     output_dir = conf.output_dir
     bcpid_stop_cmd = ["sudo", "killall", "bcpid"]
     proj_name = Path(exe).name
+
+    # obtain the build id first
+    buildid = get_buildid(mon, server, exe)
+    if len(buildid) == 0:
+        raise Exception(f"Remote binary {exe} does not contain BuildID.")
+    logging.info(f"Remote binary {exe} has BuildID {buildid}")
+
+    proj_dir = f"{conf.bcpid.ghidra_proj_dir}_{buildid}"
 
     while not success:
         # new folder for each run
@@ -103,7 +116,7 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
 
         # start bcpid
         bcpid_start_cmd  = ["sh", "-c", f"mkdir -p {bcpid_output_dir} && cd {root_dir} && " +
-                            f"bcpid/bcpid -f -o {bcpid_output_dir}"]
+                            f"bcpid/bcpid -f -o {bcpid_output_dir} -p {analyze_counter}"]
 
         logging.info("Starting bcpid...")
         proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
@@ -136,7 +149,7 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
             success = False
         else:
             if analyze:
-                extract_cmd = [ "sh", "-c", f"cd {root_dir} && bcpiquery/bcpiquery extract -c {analyze_counter}" +
+                extract_cmd = [ "sh", "-c", f"cd {root_dir} && bcpiquery/bcpiquery extract -c {analyze_counter} " +
                     f"-p {bcpid_output_dir} -o {exe}"]
 
                 logging.info("Extracting address info...")
@@ -154,15 +167,16 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
                     analyze_cmd.append(analyze_opts)
                 mon.ssh_spawn(server, analyze_cmd)
 
-                logging.info("Analysis done, copying projects...")
-                analysis_scp_cmd = ["scp", "-r", f"{server}:{proj_dir}/{proj_name}.rep", f"{output_dir}/"]
-                mon.spawn(analysis_scp_cmd)
+                logging.info("Analysis done.")
 
 # stub function for handling bcpid and pmc
 def bcpid_stub(ctx, func, server, exe, **kwargs):
     conf = ctx.obj
 
     with Monitor(ctx.obj) as mon:
+        buildid = get_buildid(mon, server, exe)
+        with open(f"{conf.output_dir}/buildid", "w") as f:
+            f.write(f"{exe}\n{buildid}\n")
         if conf.pmc.enable:
             logging.info("Running pmc loop...")
             pmc_loop(ctx, mon, server, func, **kwargs)
@@ -203,6 +217,7 @@ def cli(ctx, conf, log, verbose, pmc, bcpid, analyze):
 
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(conf.name, f"{output_dir}/{os.path.basename(conf.name)}")
 
     logging.basicConfig(
         level=getattr(logging, log.upper()),
@@ -212,6 +227,7 @@ def cli(ctx, conf, log, verbose, pmc, bcpid, analyze):
             logging.FileHandler(output_dir/"log.txt"),
         ]
     )
+    logging.info(str(sys.argv))
 
 
 @cli.command()
@@ -436,7 +452,7 @@ def pkg(ctx, server, upgrade):
             mon.ssh_spawn_all(full_addresses, cmd)
 
         cmd = ["sudo", "pkg", "remove", "-y"] + list(pkg_conf.pkg_rm)
-        mon.ssh_spawn_all(full_addresses, cmd)
+        mon.ssh_spawn_all(full_addresses, cmd, check=False)
 
         cmd = ["sudo", "pkg", "install", "-y"] + list(pkg_conf.pkg)
         mon.ssh_spawn_all(full_addresses, cmd)
@@ -459,7 +475,7 @@ def _memcached(ctx, monitor):
     memcached_exe = f"{conf.remote_dir}/bcpi-bench/memcached/memcached"
     mutilate_exe = f"{conf.remote_dir}/bcpi-bench/mutilate/mutilate"
 
-    monitor.ssh_spawn(server, ["killall", "memcached"], check=False)
+    monitor.ssh_spawn(server, ["sudo", "killall", "memcached"], check=False)
     sleep(1)
 
     logging.info(f"Starting memcached on {server}")
@@ -534,6 +550,10 @@ def _nginx(ctx, monitor):
     conf = ctx.obj
     server = conf.address(conf.nginx.server)
 
+    logging.info(f"Stopping nginx on {server}")
+    monitor.ssh_spawn(server, ["sudo", "killall", "nginx"], check=False)
+
+
     # Set up the nginx working directory
     logging.info(f"Starting nginx on {server}")
     monitor.ssh_spawn(server, ["rm", "-rf", conf.nginx.prefix])
@@ -549,8 +569,10 @@ def _nginx(ctx, monitor):
     server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
 
     sleep(1)
-    client = conf.address(conf.nginx.client)
-    logging.info(f"Starting wrk on {client}")
+    clients = []
+    for client in conf.nginx.clients:
+        clients.append(conf.address(client))
+
     client_cmd = [
         "wrk",
         "-c", str(conf.nginx.connections),
@@ -558,7 +580,11 @@ def _nginx(ctx, monitor):
         "-t", str(conf.nginx.client_threads),
         f"http://{server}:8123/",
     ]
-    monitor.ssh_spawn(client, client_cmd)
+    logging.info(f"Stopping wrk...")
+    monitor.ssh_spawn_all(clients, ["sudo", "killall", "wrk"], check=False)
+
+    logging.info(f"Starting wrk...")
+    monitor.check_success_all(monitor.ssh_spawn_all(clients, client_cmd, bg=True))
 
     logging.info(f"Terminating server on {server}")
     monitor.ssh_spawn(server, ["killall", "nginx"])
@@ -683,12 +709,14 @@ def _redis(ctx, monitor):
     server = conf.address(conf.redis.server)
     redis_exe = f"{conf.remote_dir}/bcpi-bench/redis/src/redis-server"
     memtier = f"{conf.remote_dir}/bcpi-bench/memtier/memtier_benchmark"
-    client = conf.address(conf.redis.client)
+    clients = []
+    for client in conf.redis.clients:
+        clients.append(conf.address(client))
 
     logging.info(f"Terminating redis on {server}")
-    monitor.ssh_spawn(server, ["sudo", "killall", "-9","redis-server"], check=False)
-    logging.info(f"Terminating memtier on {client}")
-    monitor.ssh_spawn(client, ["sudo", "killall", "-9","memtier_benchmark"], check=False)
+    monitor.ssh_spawn(server, ["sudo", "killall", "redis-server"], check=False)
+    logging.info(f"Terminating memtier...")
+    monitor.ssh_spawn_all(clients, ["sudo", "killall", "memtier_benchmark"], check=False)
 
     sleep(1)
     logging.info(f"Starting redis on {server}")
@@ -702,9 +730,9 @@ def _redis(ctx, monitor):
     logging.info(f"Pre-loading data on {server}")
     monitor.ssh_spawn(server, [memtier, "-n", "allkeys", "-s", "localhost", "-R", "--key-pattern=P:P", "--ratio=1:0"])
 
-    logging.info(f"Starting client on {client}")
-    monitor.ssh_spawn(client, ["sudo", "rm", "-rf", conf.redis.prefix])
-    monitor.ssh_spawn(client, ["mkdir", "-p", conf.redis.prefix])
+    logging.info(f"Starting clients...")
+    monitor.ssh_spawn_all(clients, ["sudo", "rm", "-rf", conf.redis.prefix])
+    monitor.ssh_spawn_all(clients, ["mkdir", "-p", conf.redis.prefix])
     client_cmd = [
         memtier,
         "-s", server,
@@ -715,7 +743,7 @@ def _redis(ctx, monitor):
         f"--test-time={conf.redis.duration}",
         "-o", f"{conf.redis.prefix}/memtier.txt"
     ]
-    monitor.ssh_spawn(client, client_cmd)
+    monitor.check_success_all(monitor.ssh_spawn_all(clients, client_cmd, bg=True))
 
     logging.info(f"Terminating memtier on {client}")
     monitor.ssh_spawn(client, ["sudo", "killall", "-9", "memtier_benchmark"], check=False)
