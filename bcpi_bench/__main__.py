@@ -296,7 +296,7 @@ def build(ctx, sync, patch, build, clean, server, targets):
             rsync_bg = len(full_addresses) > 1
             procs = []
             for addr in full_addresses:
-                procs.append(monitor.spawn(["rsync", "-az", "--info=progress2", "--exclude=.git", f"{ROOT_DIR}/.", f"{addr}:{remote_dir}"], bg=rsync_bg, check=False))
+                procs.append(monitor.spawn(["rsync", "-az", "--info=progress2", "--exclude=.git", "--exclude=venv", f"{ROOT_DIR}/.", f"{addr}:{remote_dir}"], bg=rsync_bg, check=False))
             monitor.check_success_all(procs)
 
         if patch:

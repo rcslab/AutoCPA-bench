@@ -141,6 +141,7 @@ memtier:
 
 .PHONY: clean-memtier
 clean-memtier:
-	cd ./memtier && \
-		(! test -e ./Makefile || $(GMAKE) clean) && \
-		rm -rf ./Makefile
+	cd ./memtier \
+	    && autoreconf -ivf \
+	    && ./configure \
+		&& $(GMAKE) clean
