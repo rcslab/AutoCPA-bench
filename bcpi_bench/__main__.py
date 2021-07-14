@@ -84,6 +84,9 @@ def get_buildid(mon, server, exe) -> str:
 def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
     conf = ctx.obj
 
+    mon.ssh_spawn(server, ["sudo", "sysctl", "security.bsd.unprivileged_proc_debug=1"])
+    mon.ssh_spawn(server, ["sudo", "sysctl", "security.bsd.unprivileged_syspmcs=1"])
+
     success = False
     analyze = conf.bcpid.analyze
     analyze_opts = conf.bcpid.analyze_opts
