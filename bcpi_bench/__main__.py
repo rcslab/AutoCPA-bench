@@ -752,10 +752,10 @@ def _redis(ctx, monitor):
         f"--test-time={conf.redis.duration}",
         "-o", f"{conf.redis.prefix}/memtier.txt"
     ]
-    monitor.check_success_all(monitor.ssh_spawn_all(clients, client_cmd, bg=True))
+    monitor.ssh_spawn_all(clients, client_cmd)
 
-    logging.info(f"Terminating memtier on {client}")
-    monitor.ssh_spawn(client, ["sudo", "killall", "-9", "memtier_benchmark"], check=False)
+    logging.info(f"Terminating memtier")
+    monitor.ssh_spawn_all(clients, ["sudo", "killall", "-9", "memtier_benchmark"], check=False)
     logging.info(f"Terminating redis on {server}")
     monitor.ssh_spawn(server, ["sudo", "killall", "-9", "redis-server"], check=False)
 
