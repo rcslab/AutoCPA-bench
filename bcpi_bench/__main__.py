@@ -624,8 +624,10 @@ def _lighttpd(ctx, monitor):
     server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
 
     sleep(1)
-    client = conf.address(conf.lighttpd.client)
-    logging.info(f"Starting wrk on {client}")
+    clients = []
+    for client in conf.lighttpd.clients:
+        clients.append(conf.address(client))
+
     client_cmd = [
         "wrk",
         "-c", str(conf.lighttpd.connections),
@@ -633,10 +635,14 @@ def _lighttpd(ctx, monitor):
         "-t", str(conf.lighttpd.client_threads),
         f"http://{server}:8123/",
     ]
-    monitor.ssh_spawn(client, client_cmd)
+    logging.info(f"Stopping wrk...")
+    monitor.ssh_spawn_all(clients, ["sudo", "killall", "wrk"], check=False)
+
+    logging.info(f"Starting wrk...")
+    monitor.ssh_spawn_all(clients, client_cmd)
 
     logging.info(f"Terminating server on {server}")
-    monitor.ssh_spawn(server, ["sudo", "killall", "lighttpd"])
+    monitor.ssh_spawn(server, ["killall", "lighttpd"])
 
     return True
 
