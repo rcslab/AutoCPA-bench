@@ -1,0 +1,45 @@
+diff --git a/memcached/memcached.h b/memcached/memcached.h
+index 8149cf4d485..8ffac45bd1e 100644
+--- a/memcached/memcached.h
++++ b/memcached/memcached.h
+@@ -642,30 +642,27 @@ typedef struct _io_pending_t io_pending_t;
+ typedef struct _mc_resp {
+     mc_resp_bundle *bundle; // ptr back to bundle
+     struct _mc_resp *next; // choo choo.
+-    int wbytes; // bytes to write out of wbuf: might be able to nuke this.
+-    int tosend; // total bytes to send for this response
+-    void *write_and_free; /** free this memory after finishing writing */
+     io_pending_t *io_pending; /* pending IO descriptor for this response */
+-
+     item *item; /* item associated with this response object, with reference held */
+-    struct iovec iov[MC_RESP_IOVCOUNT]; /* built-in iovecs to simplify network code */
++    void *write_and_free; /** free this memory after finishing writing */
++    int tosend; // total bytes to send for this response
+     int chunked_total; /* total amount of chunked item data to send. */
++    socklen_t request_addr_size;
++    // UDP bits. Copied in from the client.
++    uint16_t    request_id; /* Incoming UDP request ID, if this is a UDP "connection" */
++    uint16_t    udp_sequence; /* packet counter when transmitting result */
++    uint16_t    udp_total; /* total number of packets in sequence */
++    bool free; // double free detection.
+     uint8_t iovcnt;
+     uint8_t chunked_data_iov; /* this iov is a pointer to chunked data header */
+-
+     /* instruct transmit to skip this response object. used by storage engines
+      * to asynchronously kill an object that was queued to write
+      */
+     bool skip;
+-    bool free; // double free detection.
+-    // UDP bits. Copied in from the client.
+-    uint16_t    request_id; /* Incoming UDP request ID, if this is a UDP "connection" */
+-    uint16_t    udp_sequence; /* packet counter when transmitting result */
+-    uint16_t    udp_total; /* total number of packets in sequence */
++    int wbytes; // bytes to write out of wbuf: might be able to nuke this.
+     struct sockaddr_in6 request_addr; /* udp: Who sent this request */
+-    socklen_t request_addr_size;
+-
+     char wbuf[WRITE_BUFFER_SIZE];
++    struct iovec iov[MC_RESP_IOVCOUNT]; /* built-in iovecs to simplify network code */
+ } mc_resp;
+ 
+ #define MAX_RESP_PER_BUNDLE ((READ_BUFFER_SIZE - sizeof(mc_resp_bundle)) / sizeof(mc_resp))
