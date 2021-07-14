@@ -111,7 +111,7 @@ mysql:
 	mkdir -p ./mysql-server/build \
 	    && cd ./mysql-server/build \
 	    && $(CMAKE) .. \
-			-DCMAKE_EXE_LINKER_FLAGS="-Wl,--build-id=sha1" \
+		-DCMAKE_EXE_LINKER_FLAGS="-Wl,--build-id=sha1" \
 	        -DBUILD_CONFIG=mysql_release \
 	        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 	        -DDOWNLOAD_BOOST=1 \
@@ -144,4 +144,4 @@ clean-memtier:
 	cd ./memtier \
 	    && autoreconf -ivf \
 	    && ./configure \
-		&& $(GMAKE) clean
+	    && $(GMAKE) clean
