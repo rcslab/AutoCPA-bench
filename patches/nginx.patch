@@ -1,22 +1,23 @@
 diff --git a/nginx/src/core/ngx_connection.h b/nginx/src/core/ngx_connection.h
-index 9d8ac46d268..949bbf35eb2 100644
+index 9d8ac46d268..355f2b8b488 100644
 --- a/nginx/src/core/ngx_connection.h
 +++ b/nginx/src/core/ngx_connection.h
-@@ -120,74 +120,50 @@ typedef enum {
+@@ -120,74 +120,54 @@ typedef enum {
  
  
  struct ngx_connection_s {
-+    ngx_recv_pt         recv;
++    ngx_log_t          *log;
++    ngx_event_t        *write;
      void               *data;
      ngx_event_t        *read;
-     ngx_event_t        *write;
+-    ngx_event_t        *write;
 -
 -    ngx_socket_t        fd;
 -
 -    ngx_recv_pt         recv;
-     ngx_send_pt         send;
-     ngx_recv_chain_pt   recv_chain;
-     ngx_send_chain_pt   send_chain;
+-    ngx_send_pt         send;
+-    ngx_recv_chain_pt   recv_chain;
+-    ngx_send_chain_pt   send_chain;
 -
 -    ngx_listening_t    *listening;
 -
@@ -43,7 +44,7 @@ index 9d8ac46d268..949bbf35eb2 100644
 -    struct sockaddr    *local_sockaddr;
 -    socklen_t           local_socklen;
 -
--    ngx_buf_t          *buffer;
+     ngx_buf_t          *buffer;
 -
 -    ngx_queue_t         queue;
 -
@@ -51,6 +52,8 @@ index 9d8ac46d268..949bbf35eb2 100644
 -
 -    ngx_uint_t          requests;
 -
++    ngx_pool_t         *pool;
++    ngx_recv_pt         recv;
 +    ngx_socket_t        fd;
      unsigned            buffered:8;
 -
@@ -75,26 +78,29 @@ index 9d8ac46d268..949bbf35eb2 100644
  #if (NGX_HAVE_AIO_SENDFILE || NGX_COMPAT)
      unsigned            busy_count:2;
  #endif
--
-+    ngx_listening_t    *listening;
+ 
 +    off_t               sent;
-+    ngx_log_t          *log;
-+    ngx_pool_t         *pool;
++    ngx_send_pt         send;
++    ngx_recv_chain_pt   recv_chain;
++    ngx_send_chain_pt   send_chain;
++    ngx_listening_t    *listening;
++    ngx_queue_t         queue;
 +    struct sockaddr    *sockaddr;
++    ngx_proxy_protocol_t  *proxy_protocol;
++
++    ngx_udp_connection_t  *udp;
++    struct sockaddr    *local_sockaddr;
 +    int                 type;
 +    socklen_t           socklen;
++    socklen_t           local_socklen;
 +    ngx_str_t           addr_text;
-+    ngx_proxy_protocol_t  *proxy_protocol;
-+    ngx_udp_connection_t  *udp;
++    ngx_atomic_uint_t   number;
++    ngx_uint_t          requests;
++
 +#if (NGX_SSL || NGX_COMPAT)
 +    ngx_ssl_connection_t  *ssl;
 +#endif
-+    struct sockaddr    *local_sockaddr;
-+    ngx_buf_t          *buffer;
-+    ngx_atomic_uint_t   number;
-+    socklen_t           local_socklen;
-+    ngx_queue_t         queue;
-+    ngx_uint_t          requests;
++
  #if (NGX_THREADS || NGX_COMPAT)
      ngx_thread_task_t  *sendfile_task;
  #endif

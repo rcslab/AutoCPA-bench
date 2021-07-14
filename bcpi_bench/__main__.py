@@ -84,6 +84,9 @@ def get_buildid(mon, server, exe) -> str:
 def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
     conf = ctx.obj
 
+    mon.ssh_spawn(server, ["sudo", "sysctl", "security.bsd.unprivileged_proc_debug=1"])
+    mon.ssh_spawn(server, ["sudo", "sysctl", "security.bsd.unprivileged_syspmcs=1"])
+
     success = False
     analyze = conf.bcpid.analyze
     analyze_opts = conf.bcpid.analyze_opts
@@ -621,8 +624,10 @@ def _lighttpd(ctx, monitor):
     server_proc = monitor.ssh_spawn(server, conf.pmc.prefix + server_cmd, bg=True)
 
     sleep(1)
-    client = conf.address(conf.lighttpd.client)
-    logging.info(f"Starting wrk on {client}")
+    clients = []
+    for client in conf.lighttpd.clients:
+        clients.append(conf.address(client))
+
     client_cmd = [
         "wrk",
         "-c", str(conf.lighttpd.connections),
@@ -630,10 +635,14 @@ def _lighttpd(ctx, monitor):
         "-t", str(conf.lighttpd.client_threads),
         f"http://{server}:8123/",
     ]
-    monitor.ssh_spawn(client, client_cmd)
+    logging.info(f"Stopping wrk...")
+    monitor.ssh_spawn_all(clients, ["sudo", "killall", "wrk"], check=False)
+
+    logging.info(f"Starting wrk...")
+    monitor.ssh_spawn_all(clients, client_cmd)
 
     logging.info(f"Terminating server on {server}")
-    monitor.ssh_spawn(server, ["sudo", "killall", "lighttpd"])
+    monitor.ssh_spawn(server, ["killall", "lighttpd"])
 
     return True
 
@@ -743,10 +752,10 @@ def _redis(ctx, monitor):
         f"--test-time={conf.redis.duration}",
         "-o", f"{conf.redis.prefix}/memtier.txt"
     ]
-    monitor.check_success_all(monitor.ssh_spawn_all(clients, client_cmd, bg=True))
+    monitor.ssh_spawn_all(clients, client_cmd)
 
-    logging.info(f"Terminating memtier on {client}")
-    monitor.ssh_spawn(client, ["sudo", "killall", "-9", "memtier_benchmark"], check=False)
+    logging.info(f"Terminating memtier")
+    monitor.ssh_spawn_all(clients, ["sudo", "killall", "-9", "memtier_benchmark"], check=False)
     logging.info(f"Terminating redis on {server}")
     monitor.ssh_spawn(server, ["sudo", "killall", "-9", "redis-server"], check=False)
 
