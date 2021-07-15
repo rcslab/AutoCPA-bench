@@ -50,7 +50,7 @@ class BcpidConfig:
     root_dir: str
     ghidra_proj_dir: str
     analyze_opts: str
-    analyze_counter: str
+    analyze_counters: List[str]
     output_dir: str
 
 
