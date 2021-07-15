@@ -1,59 +1,30 @@
-import ghidra.app.decompiler.ClangFieldToken;
-import ghidra.app.decompiler.ClangLine;
-import ghidra.app.decompiler.ClangToken;
-import ghidra.app.decompiler.ClangTokenGroup;
-import ghidra.app.decompiler.DecompInterface;
-import ghidra.app.decompiler.DecompileOptions;
-import ghidra.app.decompiler.DecompileResults;
-import ghidra.app.decompiler.component.DecompilerUtils;
-import ghidra.app.decompiler.parallel.DecompileConfigurer;
-import ghidra.app.decompiler.parallel.DecompilerCallback;
-import ghidra.app.decompiler.parallel.ParallelDecompiler;
-import ghidra.app.extension.datatype.finder.DecompilerVariable;
-import ghidra.app.extension.datatype.finder.DecompilerReference;
+import bcpi.AccessPattern;
+import bcpi.AccessPatterns;
+import bcpi.BcpiConfig;
+import bcpi.BcpiData;
+import bcpi.BcpiDataRow;
+import bcpi.ControlFlowGraph;
+import bcpi.FieldReferences;
+
 import ghidra.app.script.GhidraScript;
-import ghidra.graph.DefaultGEdge;
-import ghidra.graph.GDirectedGraph;
-import ghidra.graph.GEdge;
-import ghidra.graph.GraphAlgorithms;
-import ghidra.graph.jung.JungDirectedGraph;
+import ghidra.framework.model.DomainFile;
+import ghidra.framework.model.DomainFolder;
 import ghidra.program.model.address.Address;
-import ghidra.program.model.address.AddressSetView;
-import ghidra.program.model.block.BasicBlockModel;
-import ghidra.program.model.block.CodeBlock;
-import ghidra.program.model.block.CodeBlockIterator;
-import ghidra.program.model.block.CodeBlockReference;
-import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeComponent;
 import ghidra.program.model.data.DefaultDataType;
 import ghidra.program.model.data.Structure;
 import ghidra.program.model.data.StructureDataType;
 import ghidra.program.model.listing.Function;
-import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.util.Msg;
 import ghidra.util.task.TaskMonitor;
 
-import generic.concurrent.QCallback;
-
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.HashMultiset;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Multiset;
-import com.google.common.collect.Multisets;
 import com.google.common.collect.SetMultimap;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -64,8 +35,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Analyzes cache misses to suggest reorderings of struct fields.
@@ -73,24 +42,46 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class StructOrderAnalysis extends GhidraScript {
 	@Override
 	public void run() throws Exception {
+		List<Program> programs = getAllPrograms();
+
 		// Read address_info.csv to find relevant addresses
 		String[] args = getScriptArgs();
 		Path csv = Paths.get(args[0]);
-		BcpiData data = BcpiData.parse(csv, this.currentProgram);
+		BcpiData data = BcpiData.parse(csv, programs);
 
 		// Get the decompilation of each function containing an address
 		// for which we have data.  This is much faster than calling
 		// DataTypeReferenceFinder once per field.
-		Set<Function> functions = data.getRelevantFunctions();
-		FieldReferences refs = FieldReferences.collect(this.currentProgram, functions, this.monitor);
+		SetMultimap<Program, Function> funcs = data.getRelevantFunctions(programs, this.monitor);
+		FieldReferences refs = new FieldReferences();
+		for (Program program : programs) {
+			refs.collect(program, funcs.get(program), this.monitor);
+		}
 
 		// Use our collected data to infer field access patterns
-		AccessPatterns patterns = AccessPatterns.collect(this.currentProgram, data, refs, this.monitor);
+		AccessPatterns patterns = AccessPatterns.collect(data, refs, this.monitor);
+		Msg.info(this, "Found patterns for " + (100.0 * patterns.getHitRate()) + "% of samples");
 
 		if (args.length > 1) {
 			printDetails(patterns, args[1]);
 		} else {
 			printSummary(patterns);
+		}
+	}
+
+	private List<Program> getAllPrograms() throws Exception {
+		List<Program> programs = new ArrayList<>();
+		getAllPrograms(getProjectRootFolder(), programs);
+		return programs;
+	}
+
+	private void getAllPrograms(DomainFolder folder, List<Program> programs) throws Exception {
+		for (DomainFile file : folder.getFiles()) {
+			programs.add((Program) file.getDomainObject(this, true, false, this.monitor));
+		}
+
+		for (DomainFolder subFolder : folder.getFolders()) {
+			getAllPrograms(subFolder, programs);
 		}
 	}
 
@@ -118,8 +109,8 @@ public class StructOrderAnalysis extends GhidraScript {
 				nPatterns += 1;
 			}
 
-			int before = patterns.score(struct, struct);
-			int after = patterns.score(struct, patterns.optimize(struct));
+			int before = CostModel.score(patterns, struct, struct);
+			int after = CostModel.score(patterns, struct, CostModel.optimize(patterns, struct));
 			rows.add(new SummaryRow(struct, nSamples, nPatterns, before - after));
 		}
 
@@ -159,11 +150,11 @@ public class StructOrderAnalysis extends GhidraScript {
 			}
 
 			printOriginal(patterns, struct);
-			int before = patterns.score(struct, struct);
+			int before = CostModel.score(patterns, struct, struct);
 
-			Structure optimized = patterns.optimize(struct);
+			Structure optimized = CostModel.optimize(patterns, struct);
 			printOptimized(optimized);
-			int after = patterns.score(struct, optimized);
+			int after = CostModel.score(patterns, struct, optimized);
 
 			System.out.format("Improvement: %d (before: %d, after: %d)\n", before - after, before, after);
 
@@ -376,673 +367,6 @@ class Table {
 }
 
 /**
- * Holds the data collected by BCPI.
- */
-class BcpiData {
-	private final Multiset<Address> data;
-	private final Program program;
-
-	private BcpiData(Multiset<Address> data, Program program) {
-		this.data = data;
-		this.program = program;
-	}
-
-	/**
-	 * Parse a CSV file generated by bcpiutil.
-	 */
-	static BcpiData parse(Path csv, Program program) throws IOException {
-		Multiset<Address> data = HashMultiset.create();
-
-		try (BufferedReader reader = Files.newBufferedReader(csv)) {
-			String line = null;
-			while ((line = reader.readLine()) != null) {
-				String values[] = line.split(",");
-				int count = Integer.parseInt(values[0]);
-				Address[] addresses = program.parseAddress(values[1]);
-				for (Address address : addresses) {
-					data.add(address, count);
-				}
-			}
-		}
-
-		return new BcpiData(data, program);
-	}
-
-	/**
-	 * @return All the functions that contain an address for which we have data.
-	 */
-	Set<Function> getRelevantFunctions() {
-		Set<Function> functions = new HashSet<>();
-
-		Listing listing = this.program.getListing();
-		for (Address address : this.getAddresses()) {
-			Function func = listing.getFunctionContaining(address);
-			if (func != null) {
-				functions.add(func);
-			}
-		}
-
-		return functions;
-	}
-
-	/**
-	 * @return All addresses for which we have data.
-	 */
-	Set<Address> getAddresses() {
-		return this.data.elementSet();
-	}
-
-	/**
-	 * @return The number of events collected for the given address.
-	 */
-	int getCount(Address address) {
-		return this.data.count(address);
-	}
-}
-
-/**
- * Maps code addresses to the struct field(s) they reference.
- */
-class FieldReferences {
-	private final Map<Address, Set<DataTypeComponent>> refs = new ConcurrentHashMap<>();
-	private final AtomicInteger decompileCount = new AtomicInteger();
-	private final Program program;
-	private final Set<Function> functions;
-
-	private FieldReferences(Program program, Set<Function> functions) {
-		this.program = program;
-		this.functions = functions;
-	}
-
-	/**
-	 * Collect the struct field references in the specified functions.
-	 */
-	static FieldReferences collect(Program program, Set<Function> functions, TaskMonitor monitor) throws Exception {
-		FieldReferences refs = new FieldReferences(program, functions);
-		refs.collect(monitor);
-		return refs;
-	}
-
-	private void collect(TaskMonitor monitor) throws Exception {
-		Callback callback = new Callback();
-		try {
-			decompileFunctions(callback, this.program, this.functions, monitor);
-		} finally {
-			callback.dispose();
-		}
-
-		Msg.info(this, "Decompiled " + this.decompileCount.intValue() + " functions");
-
-		int refCount = 0;
-		for (Map.Entry<Address, Set<DataTypeComponent>> entry : this.refs.entrySet()) {
-			refCount += entry.getValue().size();
-		}
-		Msg.info(this, "Found " + refCount + " field references");
-	}
-
-	/**
-	 * Facade over ParallelDecompiler::decompileFunctions() that handles the API change between
-	 * Ghidra 9.1 and 9.2.
-	 */
-	<R> void decompileFunctions(QCallback<Function, R> callback, Program program, Collection<Function> functions, TaskMonitor monitor) throws Exception {
-		MethodHandles.Lookup lookup = MethodHandles.lookup();
-		MethodHandle method92 = null;
-		MethodHandle method91 = null;
-		try {
-			MethodType type92 = MethodType.methodType(List.class, QCallback.class, Collection.class, TaskMonitor.class);
-			method92 = lookup.findStatic(ParallelDecompiler.class, "decompileFunctions", type92);
-		} catch (ReflectiveOperationException e) {
-			MethodType type91 = MethodType.methodType(List.class, QCallback.class, Program.class, Collection.class, TaskMonitor.class);
-			method91 = lookup.findStatic(ParallelDecompiler.class, "decompileFunctions", type91);
-		}
-
-		try {
-			if (method92 != null) {
-				method92.invoke(callback, functions, monitor);
-			} else {
-				method91.invoke(callback, program, functions, monitor);
-			}
-		} catch (Exception e) {
-			throw e;
-		} catch (Throwable e) {
-			throw new Exception(e);
-		}
-	}
-
-	/**
-	 * Get the fields accessed at a particular address.
-	 */
-	Set<DataTypeComponent> getFields(Address address) {
-		return this.refs.getOrDefault(address, Collections.emptySet());
-	}
-
-	/**
-	 * Based on Ghidra's DecompilerDataTypeReferenceFinder.
-	 */
-	private class Callback extends DecompilerCallback<Void> {
-		Callback() {
-			super(program, new DecompilerConfigurer());
-		}
-
-		@Override
-		public Void process(DecompileResults results, TaskMonitor monitor) {
-			processDecompilation(results);
-			return null;
-		}
-	}
-
-	private static class DecompilerConfigurer implements DecompileConfigurer {
-		@Override
-		public void configure(DecompInterface decompiler) {
-			decompiler.toggleCCode(true);
-			decompiler.toggleSyntaxTree(true);
-			decompiler.setSimplificationStyle("decompile");
-
-			DecompileOptions xmlOptions = new DecompileOptions();
-			xmlOptions.setDefaultTimeout(60);
-			decompiler.setOptions(xmlOptions);
-		}
-	}
-
-	/**
-	 * Process a single decompiled function.
-	 */
-	void processDecompilation(DecompileResults results) {
-		int count = this.decompileCount.incrementAndGet();
-		if (count % 1000 == 0) {
-			Msg.info(this, "Decompiled " + count + " functions");
-		}
-
-		Function function = results.getFunction();
-		if (function.isThunk()) {
-			return;
-		}
-
-		ClangTokenGroup tokens = results.getCCodeMarkup();
-		if (tokens == null) {
-			Msg.warn(this, "Failed to decompile " + function.getName());
-			return;
-		}
-
-		for (ClangLine line : DecompilerUtils.toLines(tokens)) {
-			processLine(line);
-		}
-	}
-
-	/**
-	 * Process a single line of a decompiled function.
-	 */
-	private void processLine(ClangLine line) {
-		for (ClangToken token : line.getAllTokens()) {
-			if (token instanceof ClangFieldToken) {
-				processField((ClangFieldToken) token);
-			}
-		}
-	}
-
-	/**
-	 * Process a field access.
-	 */
-	private void processField(ClangFieldToken token) {
-		DataTypeComponent field = getField(token);
-		if (field == null || ignoreDataType(field.getParent())) {
-			return;
-		}
-
-		Address address = getAddress(token);
-		this.refs.computeIfAbsent(address, a -> ConcurrentHashMap.newKeySet())
-			.add(field);
-	}
-
-	/**
-	 * Finds the field associated with a ClangFieldToken.
-	 */
-	private DataTypeComponent getField(ClangFieldToken token) {
-		DataType baseType = DecompilerReference.getBaseType(token.getDataType());
-
-		if (baseType instanceof Structure) {
-			Structure parent = (Structure) baseType;
-			int offset = token.getOffset();
-			if (offset >= 0 && offset < parent.getLength()) {
-				return parent.getComponentAt(offset);
-			}
-		}
-
-		return null;
-	}
-
-	/**
-	 * Finds the address of a field access.
-	 */
-	private Address getAddress(ClangFieldToken token) {
-		// Access DecompilerVariable's protected constructor through an
-		// anonymous subclass
-		return (new DecompilerVariable(token) {}).getAddress();
-	}
-
-	/**
-	 * Check if a struct should be processed.  We are looking for non-system
-	 * DWARF types.
-	 */
-	private boolean ignoreDataType(DataType type) {
-		String name = type.getPathName();
-
-		if (!name.startsWith("/DWARF/")) {
-			return true;
-		}
-
-		if (name.contains("/std/")
-		    || name.contains("/stdlib.h/")
-		    || name.contains("/stdio.h/")
-		    || name.contains("/_UNCATEGORIZED_/")) {
-			return true;
-		}
-
-		return false;
-	}
-}
-
-/**
- * A set of fields accessed in a block.
- */
-class AccessPattern {
-	private final Set<DataTypeComponent> fields;
-
-	AccessPattern(Set<DataTypeComponent> fields) {
-		this.fields = ImmutableSet.copyOf(fields);
-	}
-
-	Set<DataTypeComponent> getFields() {
-		return this.fields;
-	}
-
-	@Override
-	public String toString() {
-		StringBuilder result = new StringBuilder();
-
-		DataType struct = null;
-		for (DataTypeComponent field : this.fields) {
-			if (struct == null) {
-				struct = field.getParent();
-				result.append(struct.getName())
-					.append("::{");
-			} else {
-				result.append(", ");
-			}
-			result.append(field.getFieldName());
-		}
-
-		return result
-			.append("}")
-			.toString();
-	}
-
-	@Override
-	public boolean equals(Object obj) {
-		if (obj == this) {
-			return true;
-		} else if (!(obj instanceof AccessPattern)) {
-			return false;
-		}
-
-		AccessPattern other = (AccessPattern) obj;
-		return this.fields.equals(other.fields);
-	}
-
-	@Override
-	public int hashCode() {
-		return Objects.hash(fields);
-	}
-}
-
-/**
- * A code block in a control flow graph.
- *
- * Not using ghidra.program.model.block.graph.CodeBlockVertex because it treats
- * all dummy vertices as equal, but we need two different dummy vertices.
- */
-class CodeBlockVertex {
-	private final CodeBlock block;
-	private final String name;
-	final Object key;
-
-	CodeBlockVertex(CodeBlock block) {
-		this.block = block;
-		this.name = block.getName();
-
-		// Same assumption as Ghidra's CodeBlockVertex: every basic block
-		// has a unique min address
-		this.key = block.getMinAddress();
-	}
-
-	CodeBlockVertex(String name) {
-		this.block = null;
-		this.name = name;
-		this.key = name;
-	}
-
-	CodeBlock getCodeBlock() {
-		return this.block;
-	}
-
-	@Override
-	public String toString() {
-		return this.name;
-	}
-
-	@Override
-	public boolean equals(Object obj) {
-		if (obj == this) {
-			return true;
-		} else if (!(obj instanceof CodeBlockVertex)) {
-			return false;
-		}
-
-		CodeBlockVertex other = (CodeBlockVertex) obj;
-		return this.key.equals(other.key);
-	}
-
-	@Override
-	public int hashCode() {
-		return this.key.hashCode();
-	}
-}
-
-/**
- * An edge in a control flow graph.
- */
-class CodeBlockEdge extends DefaultGEdge<CodeBlockVertex> {
-	CodeBlockEdge(CodeBlockVertex from, CodeBlockVertex to) {
-		super(from, to);
-	}
-}
-
-/**
- * A control flow graph of a single function.
- */
-class ControlFlowGraph {
-	private final BasicBlockModel bbModel;
-	private final TaskMonitor monitor;
-	private final GDirectedGraph<CodeBlockVertex, GEdge<CodeBlockVertex>> domTree;
-
-	ControlFlowGraph(Function function, BasicBlockModel bbModel, TaskMonitor monitor) throws Exception {
-		this.bbModel = bbModel;
-		this.monitor = monitor;
-
-		AddressSetView body = function.getBody();
-		CodeBlockIterator blocks = bbModel.getCodeBlocksContaining(body, monitor);
-
-		// Workaround for https://github.com/NationalSecurityAgency/ghidra/issues/2836
-		Map<CodeBlockVertex, CodeBlockVertex> interner = new HashMap<>();
-
-		// Build the control flow graph for that function.  We want all the nodes B such
-		// that all paths from A to END contain B, i.e.
-		//
-		//     {B | B postDom A}
-		//
-		// findPostDomainance(A) gets us {B | A postDom B} instead, so we have to compute it
-		// by hand.  The post-dominance relation is just the dominance relation on the
-		// transposed graph, so we orient all the edges backwards, compute the dominance
-		// tree, and walk the parents instead of the children.
-		JungDirectedGraph<CodeBlockVertex, CodeBlockEdge> graph = new JungDirectedGraph<>();
-		while (blocks.hasNext()) {
-			CodeBlock block = blocks.next();
-			CodeBlockVertex vertex = interner.computeIfAbsent(new CodeBlockVertex(block), v -> v);
-			graph.addVertex(vertex);
-
-			CodeBlockReferenceIterator dests = block.getDestinations(monitor);
-			while (dests.hasNext()) {
-				CodeBlockReference dest = dests.next();
-				CodeBlock destBlock = dest.getDestinationBlock();
-				if (!body.contains(destBlock)) {
-					// Ignore non-local control flow
-					continue;
-				}
-
-				CodeBlockVertex destVertex = interner.computeIfAbsent(new CodeBlockVertex(destBlock), v -> v);
-				graph.addVertex(destVertex);
-				graph.addEdge(new CodeBlockEdge(destVertex, vertex));
-			}
-		}
-
-		// Make sure the graph has a unique source and sink
-		CodeBlockVertex source = new CodeBlockVertex("SOURCE");
-		for (CodeBlockVertex vertex : GraphAlgorithms.getSources(graph)) {
-			graph.addVertex(source);
-			graph.addEdge(new CodeBlockEdge(source, vertex));
-		}
-
-		// The function entry point is a sink, since the graph is reversed
-		CodeBlockVertex sink = new CodeBlockVertex("SINK");
-		for (CodeBlock block : bbModel.getCodeBlocksContaining(function.getEntryPoint(), monitor)) {
-			CodeBlockVertex vertex = interner.computeIfAbsent(new CodeBlockVertex(block), v -> v);
-			graph.addVertex(sink);
-			graph.addEdge(new CodeBlockEdge(vertex, sink));
-		}
-
-		this.domTree = GraphAlgorithms.findDominanceTree(graph, monitor);
-	}
-
-	/**
-	 * Get the basic blocks that are guaranteed to be reached from the given address.
-	 */
-	Set<CodeBlock> definitelyReachedBlocks(Address address) throws Exception {
-		List<CodeBlockVertex> sources = new ArrayList<>();
-		for (CodeBlock block : this.bbModel.getCodeBlocksContaining(address, this.monitor)) {
-			sources.add(new CodeBlockVertex(block));
-		}
-
-		Set<CodeBlock> blocks = new HashSet<>();
-		for (CodeBlockVertex vertex : GraphAlgorithms.getAncestors(this.domTree, sources)) {
-			CodeBlock block = vertex.getCodeBlock();
-			if (block != null) {
-				blocks.add(block);
-			}
-		}
-		return blocks;
-	}
-}
-
-/**
- * Struct field access patterns.
- */
-class AccessPatterns {
-	// Stores the access patterns for each struct
-	private final Map<Structure, Multiset<AccessPattern>> patterns = new HashMap<>();
-	private final SetMultimap<AccessPattern, Function> functions = HashMultimap.create();
-	private final Map<Function, ControlFlowGraph> cfgs = new HashMap<>();
-	private final Listing listing;
-	private final BasicBlockModel bbModel;
-	private final BcpiData data;
-	private final FieldReferences refs;
-
-	private AccessPatterns(Program program, BcpiData data, FieldReferences refs) {
-		this.listing = program.getListing();
-		this.bbModel = new BasicBlockModel(program);
-		this.data = data;
-		this.refs = refs;
-	}
-
-	/**
-	 * Infer access patterns from the collected data.
-	 */
-	static AccessPatterns collect(Program program, BcpiData data, FieldReferences refs, TaskMonitor monitor) throws Exception {
-		AccessPatterns patterns = new AccessPatterns(program, data, refs);
-		patterns.collect(monitor);
-		return patterns;
-	}
-
-	private void collect(TaskMonitor monitor) throws Exception {
-		for (Address baseAddress : this.data.getAddresses()) {
-			Map<Structure, Set<DataTypeComponent>> pattern = new HashMap<>();
-			int count = this.data.getCount(baseAddress);
-
-			Set<CodeBlock> blocks = getCodeBlocksFrom(baseAddress, monitor);
-			for (CodeBlock block : blocks) {
-				for (Address address : block.getAddresses(true)) {
-					// Don't count accesses before the miss
-					if (block.contains(baseAddress) && address.compareTo(baseAddress) < 0) {
-						continue;
-					}
-
-					for (DataTypeComponent field : this.refs.getFields(address)) {
-						Structure struct = (Structure) field.getParent();
-						pattern.computeIfAbsent(struct, k -> new HashSet<>())
-							.add(field);
-					}
-				}
-			}
-
-			if (pattern.isEmpty()) {
-				Msg.warn(this, "No structure accesses found for " + count + " samples at address " + baseAddress);
-			}
-
-			for (Map.Entry<Structure, Set<DataTypeComponent>> entry : pattern.entrySet()) {
-				AccessPattern accessPattern = new AccessPattern(entry.getValue());
-				this.patterns.computeIfAbsent(entry.getKey(), k -> HashMultiset.create())
-					.add(accessPattern, count);
-				this.functions.put(accessPattern, this.listing.getFunctionContaining(baseAddress));
-			}
-		}
-	}
-
-	/**
-	 * @return All the code blocks that flow from the given address.
-	 */
-	private Set<CodeBlock> getCodeBlocksFrom(Address address, TaskMonitor monitor) throws Exception {
-		// Get all the basic blocks in the function contining the given address
-		Function function = this.listing.getFunctionContaining(address);
-		if (function == null) {
-			return Collections.emptySet();
-		}
-
-		ControlFlowGraph cfg = this.cfgs.get(function);
-		if (cfg == null) {
-			cfg = new ControlFlowGraph(function, this.bbModel, monitor);
-			this.cfgs.put(function, cfg);
-		}
-
-		return cfg.definitelyReachedBlocks(address);
-	}
-
-	/**
-	 * @return All the structures about which we have data.
-	 */
-	Set<Structure> getStructures() {
-		return Collections.unmodifiableSet(this.patterns.keySet());
-	}
-
-	/**
-	 * @return All the access patterns we saw for a structure, from most to least often.
-	 */
-	Set<AccessPattern> getPatterns(Structure struct) {
-		return ImmutableSet.copyOf(
-			Multisets.copyHighestCountFirst(this.patterns.get(struct))
-				.elementSet()
-		);
-	}
-
-	/**
-	 * @return The total number of accesses to a struct.
-	 */
-	int getCount(Structure struct) {
-		return this.patterns.get(struct).size();
-	}
-
-	/**
-	 * @return The number of occurrences of an access pattern.
-	 */
-	int getCount(Structure struct, AccessPattern pattern) {
-		return this.patterns.get(struct).count(pattern);
-	}
-
-	/**
-	 * @return The number of accesses we have to this field.
-	 */
-	private int getCount(DataTypeComponent field) {
-		int count = 0;
-		Multiset<AccessPattern> patterns = this.patterns.get(field.getParent());
-		if (patterns != null) {
-			for (Multiset.Entry<AccessPattern> entry : patterns.entrySet()) {
-				if (entry.getElement().getFields().contains(field)) {
-					count += entry.getCount();
-				}
-			}
-		}
-		return count;
-	}
-
-	/**
-	 * @return The functions which had the given access pattern.
-	 */
-	Set<Function> getFunctions(AccessPattern pattern) {
-		return Collections.unmodifiableSet(this.functions.get(pattern));
-	}
-
-	/**
-	 * Optimize the layout of a struct according to its access pattern.
-	 */
-	Structure optimize(Structure struct) {
-		Set<DataTypeComponent> added = new HashSet<>();
-		List<Bucket> buckets = new ArrayList<>();
-
-		// Pack the most common access patterns first
-		for (AccessPattern pattern : getPatterns(struct)) {
-			Set<DataTypeComponent> fields = new HashSet<>(pattern.getFields());
-			fields.removeAll(added);
-			Bucket.pack(buckets, fields);
-			added.addAll(fields);
-		}
-
-		// Add any missing fields we didn't see get accessed
-		for (DataTypeComponent field : struct.getComponents()) {
-			// Skip padding
-			if (!field.getDataType().equals(DefaultDataType.dataType) && !added.contains(field)) {
-				Bucket.pack(buckets, field);
-			}
-		}
-
-		StructureDataType optimized = new StructureDataType(struct.getCategoryPath(), struct.getName(), 0, struct.getDataTypeManager());
-		for (Bucket bucket : buckets) {
-			for (DataTypeComponent field : bucket.getFields()) {
-				optimized.add(field.getDataType(), field.getLength(), field.getFieldName(), field.getComment());
-			}
-		}
-		return optimized;
-	}
-
-	/**
-	 * Compute the cost of a structure reordering in our simple cache model.
-	 */
-	int score(Structure original, Structure struct) {
-		int score = 0;
-
-		for (AccessPattern pattern : getPatterns(original)) {
-			Set<Integer> cacheLines = new HashSet<>();
-
-			for (DataTypeComponent field : pattern.getFields()) {
-				int start = 0;
-				int end = 0;
-				for (DataTypeComponent optField : struct.getComponents()) {
-					if (field.getFieldName().equals(optField.getFieldName())) {
-						start = optField.getOffset();
-						end = optField.getEndOffset();
-						break;
-					}
-				}
-				for (int i = start / 64; i <= (end - 1) / 64; ++i) {
-					cacheLines.add(i);
-				}
-			}
-
-			score += getCount(original, pattern) * cacheLines.size();
-		}
-
-		return score;
-	}
-}
-
-/**
  * A bucket of fields for structure optimization.
  */
 class Bucket {
@@ -1135,5 +459,72 @@ class Bucket {
 		}
 
 		return size;
+	}
+}
+
+/**
+ * The simplified cost model for our suggested optimizations.
+ */
+class CostModel {
+	/**
+	 * Optimize the layout of a struct according to its access pattern.
+	 */
+	static Structure optimize(AccessPatterns patterns, Structure struct) {
+		Set<DataTypeComponent> added = new HashSet<>();
+		List<Bucket> buckets = new ArrayList<>();
+
+		// Pack the most common access patterns first
+		for (AccessPattern pattern : patterns.getPatterns(struct)) {
+			Set<DataTypeComponent> fields = new HashSet<>(pattern.getFields());
+			fields.removeAll(added);
+			Bucket.pack(buckets, fields);
+			added.addAll(fields);
+		}
+
+		// Add any missing fields we didn't see get accessed
+		for (DataTypeComponent field : struct.getComponents()) {
+			// Skip padding
+			if (!field.getDataType().equals(DefaultDataType.dataType) && !added.contains(field)) {
+				Bucket.pack(buckets, field);
+			}
+		}
+
+		StructureDataType optimized = new StructureDataType(struct.getCategoryPath(), struct.getName(), 0, struct.getDataTypeManager());
+		for (Bucket bucket : buckets) {
+			for (DataTypeComponent field : bucket.getFields()) {
+				optimized.add(field.getDataType(), field.getLength(), field.getFieldName(), field.getComment());
+			}
+		}
+		return optimized;
+	}
+
+	/**
+	 * Compute the cost of a structure reordering in our simple cache model.
+	 */
+	static int score(AccessPatterns patterns, Structure original, Structure struct) {
+		int score = 0;
+
+		for (AccessPattern pattern : patterns.getPatterns(original)) {
+			Set<Integer> cacheLines = new HashSet<>();
+
+			for (DataTypeComponent field : pattern.getFields()) {
+				int start = 0;
+				int end = 0;
+				for (DataTypeComponent optField : struct.getComponents()) {
+					if (Objects.equals(field.getFieldName(), optField.getFieldName())) {
+						start = optField.getOffset();
+						end = optField.getEndOffset();
+						break;
+					}
+				}
+				for (int i = start / 64; i <= (end - 1) / 64; ++i) {
+					cacheLines.add(i);
+				}
+			}
+
+			score += patterns.getCount(original, pattern) * cacheLines.size();
+		}
+
+		return score;
 	}
 }
