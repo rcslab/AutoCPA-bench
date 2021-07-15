@@ -90,7 +90,6 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
     success = False
     analyze = conf.bcpid.analyze
     analyze_opts = conf.bcpid.analyze_opts
-    analyze_counter = conf.bcpid.analyze_counter
     root_dir = conf.bcpid.root_dir
     bcpid_output_dir_prefix = conf.bcpid.output_dir
     output_dir = conf.output_dir
@@ -118,10 +117,15 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
         mon.wait(stop_proc)
 
         # start bcpid
-        bcpid_start_cmd  = ["sh", "-c", f"mkdir -p {bcpid_output_dir} && cd {root_dir} && " +
-                            f"bcpid/bcpid -f -o {bcpid_output_dir} -p {analyze_counter}"]
+        bcpid_start_cmd = [
+            f"{root_dir}/bcpid/bcpid",
+            "-f",
+            "-o", bcpid_output_dir,
+            "-p", ";".join(conf.bcpid.analyze_counters),
+        ]
 
         logging.info("Starting bcpid...")
+        mon.ssh_spawn(server, ["mkdir", "-p", bcpid_output_dir])
         proc_bcpid = mon.ssh_spawn(server, bcpid_start_cmd, bg=True)
         logging.info("Waiting for bcpid init...")
         sleep(10)
@@ -152,8 +156,12 @@ def bcpid_loop(ctx, mon, func, server, exe, **kwargs):
             success = False
         else:
             if analyze:
-                extract_cmd = [ "sh", "-c", f"cd {root_dir} && bcpiquery/bcpiquery extract -c {analyze_counter} " +
-                    f"-p {bcpid_output_dir} -o {exe}"]
+                extract_cmd = [
+                    f"{root_dir}/bcpiquery/bcpiquery"
+                    "extract",
+                    "-p", bcpid_output_dir,
+                    "-o", exe,
+                ]
 
                 logging.info("Extracting address info...")
                 mon.ssh_spawn(server, extract_cmd)
