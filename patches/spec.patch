@@ -1,0 +1,1619 @@
+From 70fabc6eabbe99703e9a97a414e5ed06338e5ab6 Mon Sep 17 00:00:00 2001
+From: Tavian Barnes <tavianator@tavianator.com>
+Date: Fri, 13 Aug 2021 08:29:36 -0400
+Subject: [PATCH] Struct reordering patches
+
+---
+ benchspec/CPU/500.perlbench_r/src/regexp.h    |  52 +--
+ benchspec/CPU/500.perlbench_r/src/sv.h        |  31 +-
+ benchspec/CPU/502.gcc_r/src/basic-block.h     |  40 +-
+ benchspec/CPU/502.gcc_r/src/function.h        |  83 ++---
+ benchspec/CPU/502.gcc_r/src/include/hashtab.h |  47 +--
+ benchspec/CPU/505.mcf_r/src/defines.h         |  99 ++---
+ .../525.x264_r/src/x264_src/common/common.h   | 342 +++++++-----------
+ .../525.x264_r/src/x264_src/common/frame.h    | 167 ++++-----
+ .../525.x264_r/src/x264_src/encoder/analyse.c |  82 ++---
+ .../CPU/525.x264_r/src/x264_src/encoder/me.h  |  21 +-
+ .../CPU/557.xz_r/src/liblzma/lz/lz_encoder.h  |  90 +++--
+ 11 files changed, 459 insertions(+), 595 deletions(-)
+
+diff --git a/benchspec/CPU/500.perlbench_r/src/regexp.h b/benchspec/CPU/500.perlbench_r/src/regexp.h
+index 04eeba9..95bd918 100644
+--- a/benchspec/CPU/500.perlbench_r/src/regexp.h
++++ b/benchspec/CPU/500.perlbench_r/src/regexp.h
+@@ -98,44 +98,44 @@ struct reg_code_block {
+ */
+ 
+ #define _REGEXP_COMMON							\
+-        /* what engine created this regexp? */				\
+-	const struct regexp_engine* engine; 				\
+ 	REGEXP *mother_re; /* what re is this a lightweight copy of? */	\
+-	HV *paren_names;   /* Optional hash of paren names */		\
++	/* final match, used for optimisations */			\
++	struct reg_substr_data *substrs;				\
++	SSize_t minlen;	/* mininum possible number of chars in string to match */\
++	void *pprivate;	/* Data private to the regex engine which */	\
++			/* created this object. */			\
+ 	/* Information about the match that the perl core uses to */	\
+ 	/* manage things */						\
+ 	U32 extflags;	/* Flags used both externally and internally */	\
+-	SSize_t minlen;	/* mininum possible number of chars in string to match */\
+-	SSize_t minlenret; /* mininum possible number of chars in $& */		\
+-	STRLEN gofs;	/* chars left of pos that we search from */	\
+-	/* substring data about strings that must appear in the */	\
+-	/* final match, used for optimisations */			\
+-	struct reg_substr_data *substrs;				\
+-	U32 nparens;	/* number of capture buffers */			\
+ 	/* private engine specific data */				\
+ 	U32 intflags;	/* Engine Specific Internal flags */		\
+-	void *pprivate;	/* Data private to the regex engine which */	\
+-			/* created this object. */			\
++	/* substring data about strings that must appear in the */	\
++	U32 nparens;	/* number of capture buffers */			\
++	/* offset from wrapped to the start of precomp */		\
++	PERL_BITFIELD32 pre_prefix:4;					\
++        /* original flags used to compile the pattern, may differ */    \
++        /* from extflags in various ways */                             \
++        PERL_BITFIELD32 compflags:9;                                    \
++	HV *paren_names;   /* Optional hash of paren names */		\
++        /* what engine created this regexp? */				\
++	const struct regexp_engine* engine; 				\
++	/* Array of offsets for (@-) and (@+) */			\
++	regexp_paren_pair *offs;					\
++	/* Information about the match that isn't often used */		\
++        SSize_t maxlen;        /* mininum possible number of chars in string to match */\
++	SSize_t minlenret; /* mininum possible number of chars in $& */		\
++	U32 lastcloseparen;		/* last close paren matched */	\
+ 	/* Data about the last/current match. These are modified */	\
+ 	/* during matching */						\
+ 	U32 lastparen;			/* last open paren matched */	\
+-	U32 lastcloseparen;		/* last close paren matched */	\
+-	/* Array of offsets for (@-) and (@+) */			\
+-	regexp_paren_pair *offs;					\
++	CV *qr_anoncv;	/* the anon sub wrapped round qr/(?{..})/ */    \
++	STRLEN gofs;	/* chars left of pos that we search from */	\
++	SV_SAVED_COPY	/* If non-NULL, SV which is COW from original */\
+ 	/* saved or original string so \digit works forever. */		\
+ 	char *subbeg;							\
+-	SV_SAVED_COPY	/* If non-NULL, SV which is COW from original */\
+-	SSize_t sublen;	/* Length of string pointed by subbeg */	\
+-	SSize_t suboffset; /* byte offset of subbeg from logical start of str */ \
+ 	SSize_t subcoffset; /* suboffset equiv, but in chars (for @-/@+) */ \
+-	/* Information about the match that isn't often used */		\
+-        SSize_t maxlen;        /* mininum possible number of chars in string to match */\
+-	/* offset from wrapped to the start of precomp */		\
+-	PERL_BITFIELD32 pre_prefix:4;					\
+-        /* original flags used to compile the pattern, may differ */    \
+-        /* from extflags in various ways */                             \
+-        PERL_BITFIELD32 compflags:9;                                    \
+-	CV *qr_anoncv	/* the anon sub wrapped round qr/(?{..})/ */
++	SSize_t sublen;	/* Length of string pointed by subbeg */	\
++	SSize_t suboffset /* byte offset of subbeg from logical start of str */
+ 
+ typedef struct regexp {
+ 	_XPV_HEAD;
+diff --git a/benchspec/CPU/500.perlbench_r/src/sv.h b/benchspec/CPU/500.perlbench_r/src/sv.h
+index 3dcad69..d377c11 100644
+--- a/benchspec/CPU/500.perlbench_r/src/sv.h
++++ b/benchspec/CPU/500.perlbench_r/src/sv.h
+@@ -567,30 +567,31 @@ struct xpvgv {
+ typedef U32 cv_flags_t;
+ 
+ #define _XPVCV_COMMON								\
+-    HV *	xcv_stash;							\
++    CV *	xcv_outside;							\
++    I32	xcv_depth;	/* >= 2 indicates recursive call */			\
++    cv_flags_t	xcv_flags;						\
+     union {									\
+-	OP *	xcv_start;							\
+-	ANY	xcv_xsubany;							\
+-    }		xcv_start_u;					    		\
++	PADLIST *	xcv_padlist;						\
++	void *		xcv_hscxt;						\
++    }		xcv_padlist_u;							\
+     union {									\
+ 	OP *	xcv_root;							\
+ 	void	(*xcv_xsub) (pTHX_ CV*);					\
+     }		xcv_root_u;							\
+-    union {								\
+-	GV *	xcv_gv;							\
+-	HEK *	xcv_hek;						\
+-    }		xcv_gv_u;						\
+-    char *	xcv_file;							\
+     union {									\
+-	PADLIST *	xcv_padlist;						\
+-	void *		xcv_hscxt;						\
+-    }		xcv_padlist_u;							\
+-    CV *	xcv_outside;							\
++	OP *	xcv_start;							\
++	ANY	xcv_xsubany;							\
++    }		xcv_start_u;					    		\
++    HV *	xcv_stash;							\
++    char *	xcv_file;							\
+     U32		xcv_outside_seq; /* the COP sequence (at the point of our	\
+ 				  * compilation) in the lexically enclosing	\
+ 				  * sub */					\
+-    cv_flags_t	xcv_flags;						\
+-    I32	xcv_depth	/* >= 2 indicates recursive call */
++    union {								\
++	GV *	xcv_gv;							\
++	HEK *	xcv_hek;						\
++    }		xcv_gv_u
++
+ 
+ /* This structure must match XPVCV in cv.h */
+ 
+diff --git a/benchspec/CPU/502.gcc_r/src/basic-block.h b/benchspec/CPU/502.gcc_r/src/basic-block.h
+index 524d00d..4dfc3d8 100644
+--- a/benchspec/CPU/502.gcc_r/src/basic-block.h
++++ b/benchspec/CPU/502.gcc_r/src/basic-block.h
+@@ -219,41 +219,41 @@ struct GTY((chain_next ("%h.next_bb"), chain_prev ("%h.prev_bb"))) basic_block_d
+   VEC(edge,gc) *preds;
+   VEC(edge,gc) *succs;
+ 
+-  /* Auxiliary info specific to a pass.  */
+-  PTR GTY ((skip (""))) aux;
+-
+-  /* Innermost loop containing the block.  */
+-  struct loop *loop_father;
+-
+-  /* The dominance and postdominance information node.  */
+-  struct et_node * GTY ((skip (""))) dom[2];
+-
+   /* Previous and next blocks in the chain.  */
+-  struct basic_block_def *prev_bb;
+   struct basic_block_def *next_bb;
+-
+-  union basic_block_il_dependent {
+-      struct gimple_bb_info * GTY ((tag ("0"))) gimple;
+-      struct rtl_bb_info * GTY ((tag ("1"))) rtl;
+-    } GTY ((desc ("((%1.flags & BB_RTL) != 0)"))) il;
++  struct basic_block_def *prev_bb;
+ 
+   /* Expected number of executions: calculated in profile.c.  */
+   gcov_type count;
+ 
++  /* Various flags.  See BB_* below.  */
++  int flags;
++
++  /* Expected frequency.  Normalized to be in range 0 to BB_FREQ_MAX.  */
++  int frequency;
++
+   /* The index of this block.  */
+   int index;
+ 
+   /* The loop depth of this block.  */
+   int loop_depth;
+ 
+-  /* Expected frequency.  Normalized to be in range 0 to BB_FREQ_MAX.  */
+-  int frequency;
++  union basic_block_il_dependent {
++      struct gimple_bb_info * GTY ((tag ("0"))) gimple;
++      struct rtl_bb_info * GTY ((tag ("1"))) rtl;
++    } GTY ((desc ("((%1.flags & BB_RTL) != 0)"))) il;
++
++  /* The dominance and postdominance information node.  */
++  struct et_node * GTY ((skip (""))) dom[2];
++
++  /* Innermost loop containing the block.  */
++  struct loop *loop_father;
++
++  /* Auxiliary info specific to a pass.  */
++  PTR GTY ((skip (""))) aux;
+ 
+   /* The discriminator for this block.  */
+   int discriminator;
+-
+-  /* Various flags.  See BB_* below.  */
+-  int flags;
+ };
+ 
+ struct GTY(()) rtl_bb_info {
+diff --git a/benchspec/CPU/502.gcc_r/src/function.h b/benchspec/CPU/502.gcc_r/src/function.h
+index fb2965a..9c83b16 100644
+--- a/benchspec/CPU/502.gcc_r/src/function.h
++++ b/benchspec/CPU/502.gcc_r/src/function.h
+@@ -461,72 +461,23 @@ extern GTY(()) struct rtl_data x_rtl;
+    describing the status of the current function.  */
+ 
+ struct GTY(()) function {
+-  struct eh_status *eh;
+-
+   /* The control flow graph for this function.  */
+   struct control_flow_graph *cfg;
+-
+-  /* GIMPLE body for this function.  */
+-  struct gimple_seq_d *gimple_body;
+-
++  struct eh_status *eh;
+   /* SSA and dataflow information.  */
+   struct gimple_df *gimple_df;
+-
+   /* The loops in this function.  */
+   struct loops *x_current_loops;
+-
+-  /* Value histograms attached to particular statements.  */
+-  htab_t GTY((skip)) value_histograms;
+-
+-  /* For function.c.  */
+-
+   /* Points to the FUNCTION_DECL of this function.  */
+   tree decl;
+-
++  /* List of function local variables, functions, types and constants.  */
++  tree local_decls;
+   /* A PARM_DECL that should contain the static chain for this function.
+      It will be initialized at the beginning of the function.  */
+   tree static_chain_decl;
+-
+-  /* An expression that contains the non-local goto save area.  The first
+-     word is the saved frame pointer and the second is the saved stack
+-     pointer.  */
+-  tree nonlocal_goto_save_area;
+-
+-  /* List of function local variables, functions, types and constants.  */
+-  tree local_decls;
+-
+-  /* For md files.  */
+-
+-  /* tm.h can use this to store whatever it likes.  */
+-  struct machine_function * GTY ((maybe_undef)) machine;
+-
+-  /* Language-specific code can use this to store whatever it likes.  */
+-  struct language_function * language;
+-
+-  /* Used types hash table.  */
+-  htab_t GTY ((param_is (union tree_node))) used_types_hash;
+-
+   /* Last statement uid.  */
+   int last_stmt_uid;
+ 
+-  /* Function sequence number for profiling, debugging, etc.  */
+-  int funcdef_no;
+-
+-  /* Line number of the start of the function for debugging purposes.  */
+-  location_t function_start_locus;
+-
+-  /* Line number of the end of the function.  */
+-  location_t function_end_locus;
+-
+-  /* Properties used by the pass manager.  */
+-  unsigned int curr_properties;
+-  unsigned int last_verified;
+-
+-  /* Non-null if the function does something that would prevent it from
+-     being copied; this applies to both versioning and inlining.  Set to
+-     a string describing the reason for failure.  */
+-  const char * GTY((skip)) cannot_be_copied_reason;
+-
+   /* Collected bit flags.  */
+ 
+   /* Number of units of general registers that need saving in stdarg
+@@ -596,6 +547,34 @@ struct GTY(()) function {
+      adjusts one of its arguments and forwards to another
+      function.  */
+   unsigned int is_thunk : 1;
++
++  /* GIMPLE body for this function.  */
++  struct gimple_seq_d *gimple_body;
++  /* Used types hash table.  */
++  htab_t GTY ((param_is (union tree_node))) used_types_hash;
++  /* Value histograms attached to particular statements.  */
++  htab_t GTY((skip)) value_histograms;
++  /* Language-specific code can use this to store whatever it likes.  */
++  struct language_function * language;
++  /* tm.h can use this to store whatever it likes.  */
++  struct machine_function * GTY ((maybe_undef)) machine;
++  /* An expression that contains the non-local goto save area.  The first
++     word is the saved frame pointer and the second is the saved stack
++     pointer.  */
++  tree nonlocal_goto_save_area;
++  /* Function sequence number for profiling, debugging, etc.  */
++  int funcdef_no;
++  /* Line number of the end of the function.  */
++  location_t function_end_locus;
++  /* Properties used by the pass manager.  */
++  unsigned int curr_properties;
++  unsigned int last_verified;
++  /* Non-null if the function does something that would prevent it from
++     being copied; this applies to both versioning and inlining.  Set to
++     a string describing the reason for failure.  */
++  const char * GTY((skip)) cannot_be_copied_reason;
++  /* Line number of the start of the function for debugging purposes.  */
++  location_t function_start_locus;
+ };
+ 
+ /* If va_list_[gf]pr_size is set to this, it means we don't know how
+diff --git a/benchspec/CPU/502.gcc_r/src/include/hashtab.h b/benchspec/CPU/502.gcc_r/src/include/hashtab.h
+index 1cd406d..a88da09 100644
+--- a/benchspec/CPU/502.gcc_r/src/include/hashtab.h
++++ b/benchspec/CPU/502.gcc_r/src/include/hashtab.h
+@@ -98,47 +98,48 @@ typedef void (*htab_free_with_arg) (void *, void *);
+    change.  */
+ 
+ struct GTY(()) htab {
+-  /* Pointer to hash function.  */
+-  htab_hash hash_f;
+-
+-  /* Pointer to comparison function.  */
+-  htab_eq eq_f;
++  /* Pointers to allocate/free functions.  */
++  htab_alloc alloc_f;
++  htab_free free_f;
+ 
+   /* Pointer to cleanup function.  */
+   htab_del del_f;
+ 
+-  /* Table itself.  */
+-  void ** GTY ((use_param, length ("%h.size"))) entries;
++  /* Pointer to comparison function.  */
++  htab_eq eq_f;
++
++  /* Pointer to hash function.  */
++  htab_hash hash_f;
+ 
+   /* Current size (in entries) of the hash table.  */
+   size_t size;
+ 
+-  /* Current number of elements including also deleted elements.  */
+-  size_t n_elements;
+-
+-  /* Current number of deleted elements in the table.  */
+-  size_t n_deleted;
+-
+-  /* The following member is used for debugging. Its value is number
+-     of all calls of `htab_find_slot' for the hash table. */
+-  unsigned int searches;
++  /* Table itself.  */
++  void ** GTY ((use_param, length ("%h.size"))) entries;
+ 
+   /* The following member is used for debugging.  Its value is number
+      of collisions fixed for time of work with the hash table. */
+   unsigned int collisions;
+ 
+-  /* Pointers to allocate/free functions.  */
+-  htab_alloc alloc_f;
+-  htab_free free_f;
++  /* Current size (in entries) of the hash table, as an index into the
++     table of primes.  */
++  unsigned int size_prime_index;
+ 
+   /* Alternate allocate/free functions, which take an extra argument.  */
+-  void * GTY((skip)) alloc_arg;
+   htab_alloc_with_arg alloc_with_arg_f;
+   htab_free_with_arg free_with_arg_f;
+ 
+-  /* Current size (in entries) of the hash table, as an index into the
+-     table of primes.  */
+-  unsigned int size_prime_index;
++  /* Current number of deleted elements in the table.  */
++  size_t n_deleted;
++
++  /* Current number of elements including also deleted elements.  */
++  size_t n_elements;
++
++  void * GTY((skip)) alloc_arg;
++
++  /* The following member is used for debugging. Its value is number
++     of all calls of `htab_find_slot' for the hash table. */
++  unsigned int searches;
+ };
+ 
+ typedef struct htab *htab_t;
+diff --git a/benchspec/CPU/505.mcf_r/src/defines.h b/benchspec/CPU/505.mcf_r/src/defines.h
+index 806a71d..4a113ee 100644
+--- a/benchspec/CPU/505.mcf_r/src/defines.h
++++ b/benchspec/CPU/505.mcf_r/src/defines.h
+@@ -148,61 +148,74 @@ typedef struct basket
+ 
+ struct node
+ {
+-  cost_t potential; 
+-  int orientation;
+-  node_p child;
+-  node_p pred;
+-  node_p sibling;
+-  node_p sibling_prev;     
+-  arc_p basic_arc; 
+-  arc_p firstout, firstin;
+-  arc_p arc_tmp;
+-  flow_t flow;
+-  LONG depth; 
+-  int number;
+-  int time;
++        arc_p   arc_tmp;      
++        arc_p   firstin;      
++        arc_p   firstout;     
++        cost_t  potential;    
++        int64_t depth;        
++        node_p  pred;         
++        int     number;       
++        int     orientation;  
++        int     time;         
++        arc_p   basic_arc;    
++        flow_t  flow;         
++        node_p  child;        
++        node_p  sibling;      
++        node_p  sibling_prev; 
+ };
+ 
+ 
+ 
+ struct arc
+ {
+-  int id;
+-  cost_t cost;
+-  node_p tail, head;
+-  short ident;
+-  arc_p nextout, nextin;
+-  flow_t flow;
+-  cost_t org_cost;
++        arc_p  nextin;   
++        arc_p  nextout;  
++        cost_t cost;     
++        cost_t org_cost; 
++        flow_t flow;     
++        node_p head;     
++        node_p tail;     
++        int    id;       
++        short  ident;    
+ };
+ 
+ 
+ 
+ typedef struct network
+ {
+-  char inputfile[200];
+-  char clustfile[200];
+-  LONG n, n_trips;
+-  LONG max_m, m, m_org, m_impl;
+-  LONG max_residual_new_m, max_new_m;
+-  
+-  LONG primal_unbounded;
+-  LONG dual_unbounded;
+-  LONG perturbed;
+-  LONG feasible;
+-  LONG eps;
+-  LONG opt_tol;
+-  LONG feas_tol;
+-  LONG pert_val;
+-  LONG bigM;
+-  double optcost;  
+-  cost_t ignore_impl;
+-  node_p nodes, stop_nodes;
+-  arc_p arcs, stop_arcs, sorted_arcs;
+-  arc_p dummy_arcs, stop_dummy; 
+-  LONG iterations;
+-  LONG bound_exchanges;
+-  LONG nr_group, full_groups, max_elems;
++        arc_p     arcs;               
++        arc_p     sorted_arcs;        
++        arc_p     stop_arcs;          
++        int64_t   bigM;               
++        int64_t   full_groups;        
++        int64_t   m;                  
++        int64_t   m_impl;             
++        int64_t   max_elems;          
++        int64_t   feas_tol;           
++        int64_t   max_m;              
++        int64_t   max_new_m;          
++        int64_t   max_residual_new_m; 
++        int64_t   n;                  
++        int64_t   n_trips;            
++        int64_t   nr_group;           
++        node_p    nodes;              
++        arc_p     dummy_arcs;         
++        arc_p     stop_dummy;         
++        int64_t   dual_unbounded;     
++        int64_t   feasible;           
++        int64_t   iterations;         
++        int64_t   perturbed;          
++        int64_t   primal_unbounded;   
++        node_p    stop_nodes;         
++        cost_t    ignore_impl;        
++        double    optcost;            
++        int64_t   bound_exchanges;    
++        int64_t   eps;                
++        int64_t   m_org;              
++        int64_t   opt_tol;            
++        int64_t   pert_val;           
++        char      clustfile[200];     
++        char      inputfile[200];     
+ } network_t;
+ 
+ typedef struct list_elem
+diff --git a/benchspec/CPU/525.x264_r/src/x264_src/common/common.h b/benchspec/CPU/525.x264_r/src/x264_src/common/common.h
+index 6f4696b..2c021b4 100644
+--- a/benchspec/CPU/525.x264_r/src/x264_src/common/common.h
++++ b/benchspec/CPU/525.x264_r/src/x264_src/common/common.h
+@@ -380,15 +380,71 @@ typedef struct x264_ratecontrol_t   x264_ratecontrol_t;
+ 
+ struct x264_t
+ {
+-    /* encoder parameters */
+-    x264_param_t    param;
+-
+-    x264_t          *thread[X264_THREAD_MAX+1];
+-    x264_pthread_t  thread_handle;
+-    int             b_thread_active;
+-    int             i_thread_phase; /* which thread to use for the next frame */
++    x264_frame_t    *fref0[16+3];     /* ref list 0 */
++    uint8_t *intra_border_backup[2][3]; /* bottom pixels of the previous mb row, used for intra prediction after the framebuffer has been deblocked */
++    /* frame being reconstructed */
++    x264_frame_t    *fdec;
++    /* current frame being encoded */
++    x264_frame_t    *fenc;
++    void *scratch_buffer; /* for any temporary storage that doesn't want repeated malloc */
++    x264_lookahead_t *lookahead;
++    x264_sps_t      *sps;
++    int             b_ref_reorder[2];
++    int             i_frame;
++    int             i_nal_ref_idc;
++    int             i_nal_type;
++    int             i_ref0;
++    int             i_ref1;
++    int             i_thread_frames; /* Number of different frames being encoded by threads;
++                                      * 1 when sliced-threads is on. */
+     int             i_threadslice_start; /* first row in this thread slice */
+     int             i_threadslice_end; /* row after the end of this thread slice */
++    uint16_t *cost_mv[92];
++    uint8_t (*deblock_strength[2])[2][4][4];
++    int64_t i_reordered_pts_delay;
++    const uint8_t   *chroma_qp_table; /* includes both the nonlinear luma->chroma mapping and chroma_qp_offset */
++    x264_pps_t      *pps;
++    x264_ratecontrol_t *rc;
++    int             i_coded_fields_lookahead; /* Use separate counters for lookahead */
++    int             i_cpb_delay_lookahead;
++    int             i_frame_num;
++    int             i_idr_pic_id;
++    x264_frame_t    *fref1[16+3];     /* ref list 1 */
++    x264_predict8x8_t   predict_8x8[9+3];
++    x264_predict_t      predict_8x8c[4+3];
++    x264_predict_8x8_filter_t predict_8x8_filter;
++    uint16_t        (*quant4_bias[4])[16];   /* [4][52][16] */
++    uint16_t        (*quant4_mf[4])[16];     /* [4][52][16] */
++    int             (*dequant4_mf[4])[16];   /* [4][6][16] */
++    int             (*unquant8_mf[2])[64];   /* [2][52][64] */
++    uint32_t        nr_count[2];
++    int             i_disp_fields;  /* Number of displayed fields (both coded and implied via pic_struct) */
++    int             i_prev_duration; /* duration of previous frame */
++    x264_predict_t      predict_16x16[4+3];
++    int initial_cpb_removal_delay;
++    int initial_cpb_removal_delay_offset;
++    int             (*dequant8_mf[2])[64];   /* [2][6][64] */
++    uint16_t        (*quant8_bias[2])[64];   /* [2][52][64] */
++    uint16_t        (*quant8_mf[2])[64];     /* [2][52][64] */
++    uint8_t *nal_buffer;
++    int             i_thread_phase; /* which thread to use for the next frame */
++    x264_pthread_t  thread_handle;
++    x264_predict_t      predict_4x4[9+3];
++    int             (*unquant4_mf[4])[16];   /* [4][52][16] */
++    int             b_queued_intra_refresh;
++    int             i_coded_fields; /* Number of coded fields (both coded and implied via pic_struct) */
++    int             i_cpb_delay;    /* Equal to number of fields preceding this field
++                                     * since last buffering_period SEI */
++    int             i_disp_fields_last_frame;
++    int      nal_buffer_size;
++    x264_cabac_t    cabac;
++    x264_t          *thread[X264_THREAD_MAX+1];
++    int             b_thread_active;
++    int             i_dts_compress_multiplier;
++    x264_zigzag_function_t zigzagf;
++    ALIGNED_16( uint32_t nr_residual_sum[2][64] );
++    ALIGNED_16( uint16_t nr_offset[2][64] );
++    x264_param_t    param;
+ 
+     /* bitstream output */
+     struct
+@@ -401,67 +457,11 @@ struct x264_t
+         bs_t        bs;
+     } out;
+ 
+-    uint8_t *nal_buffer;
+-    int      nal_buffer_size;
+-
+-    /**** thread synchronization starts here ****/
+-
+-    /* frame number/poc */
+-    int             i_frame;
+-    int             i_frame_num;
+-
+-    int             i_thread_frames; /* Number of different frames being encoded by threads;
+-                                      * 1 when sliced-threads is on. */
+-    int             i_nal_type;
+-    int             i_nal_ref_idc;
+-
+-    int             i_disp_fields;  /* Number of displayed fields (both coded and implied via pic_struct) */
+-    int             i_disp_fields_last_frame;
+-    int             i_prev_duration; /* Duration of previous frame */
+-    int             i_coded_fields; /* Number of coded fields (both coded and implied via pic_struct) */
+-    int             i_cpb_delay;    /* Equal to number of fields preceding this field
+-                                     * since last buffering_period SEI */
+-    int             i_coded_fields_lookahead; /* Use separate counters for lookahead */
+-    int             i_cpb_delay_lookahead;
+-
+-    int             b_queued_intra_refresh;
+-
+-    /* We use only one SPS and one PPS */
+     x264_sps_t      sps_array[1];
+-    x264_sps_t      *sps;
+     x264_pps_t      pps_array[1];
+-    x264_pps_t      *pps;
+-    int             i_idr_pic_id;
+-
+-    /* Timebase multiplier for DTS compression */
+-    int             i_dts_compress_multiplier;
+-
+-    /* quantization matrix for decoding, [cqm][qp%6][coef] */
+-    int             (*dequant4_mf[4])[16];   /* [4][6][16] */
+-    int             (*dequant8_mf[2])[64];   /* [2][6][64] */
+-    /* quantization matrix for trellis, [cqm][qp][coef] */
+-    int             (*unquant4_mf[4])[16];   /* [4][52][16] */
+-    int             (*unquant8_mf[2])[64];   /* [2][52][64] */
+-    /* quantization matrix for deadzone */
+-    uint16_t        (*quant4_mf[4])[16];     /* [4][52][16] */
+-    uint16_t        (*quant8_mf[2])[64];     /* [2][52][64] */
+-    uint16_t        (*quant4_bias[4])[16];   /* [4][52][16] */
+-    uint16_t        (*quant8_bias[2])[64];   /* [2][52][64] */
+-
+-    /* mv/ref cost arrays.  Indexed by lambda instead of
+-     * qp because, due to rounding, some quantizers share
+-     * lambdas.  This saves memory. */
+-    uint16_t *cost_mv[92];
+     uint16_t *cost_mv_fpel[92][4];
+-
+-    const uint8_t   *chroma_qp_table; /* includes both the nonlinear luma->chroma mapping and chroma_qp_offset */
+-
+-    /* Slice header */
+     x264_slice_header_t sh;
+ 
+-    /* cabac context */
+-    x264_cabac_t    cabac;
+-
+     struct
+     {
+         /* Frames to be encoded (whose types have been decided) */
+@@ -493,24 +493,6 @@ struct x264_t
+         int b_have_sub8x8_esa;
+     } frames;
+ 
+-    /* current frame being encoded */
+-    x264_frame_t    *fenc;
+-
+-    /* frame being reconstructed */
+-    x264_frame_t    *fdec;
+-
+-    /* references lists */
+-    int             i_ref0;
+-    x264_frame_t    *fref0[16+3];     /* ref list 0 */
+-    int             i_ref1;
+-    x264_frame_t    *fref1[16+3];     /* ref list 1 */
+-    int             b_ref_reorder[2];
+-
+-    /* hrd */
+-    int initial_cpb_removal_delay;
+-    int initial_cpb_removal_delay_offset;
+-    int64_t i_reordered_pts_delay;
+-
+     /* Current MB DCT coeffs */
+     struct
+     {
+@@ -524,107 +506,94 @@ struct x264_t
+     /* MB table and cache for current frame/mb */
+     struct
+     {
+-        int     i_mb_count;                 /* number of mbs in a frame */
+-
+-        /* Strides */
+-        int     i_mb_stride;
+-        int     i_b8_stride;
+-        int     i_b4_stride;
+-
+-        /* Current index */
+-        int     i_mb_x;
+-        int     i_mb_y;
+-        int     i_mb_xy;
+-        int     i_b8_xy;
+-        int     i_b4_xy;
+-
+-        /* Search parameters */
+-        int     i_me_method;
+-        int     i_subpel_refine;
++        int16_t (*dist_scale_factor)[4];
++        int     mv_max_fpel[2];
++        int     mv_min_fpel[2];
+         int     b_chroma_me;
+-        int     b_trellis;
+-        int     b_noise_reduction;
+         int     b_dct_decimate;
+-        int     i_psy_rd; /* Psy RD strength--fixed point value*/
+-        int     i_psy_trellis; /* Psy trellis strength--fixed point value*/
+-
+         int     b_interlaced;
+-
+-        /* Allowed qpel MV range to stay within the picture + emulated edge pixels */
+-        int     mv_min[2];
+-        int     mv_max[2];
+-        /* Subpel MV range for motion search.
+-         * same mv_min/max but includes levels' i_mv_range. */
+-        int     mv_min_spel[2];
+-        int     mv_max_spel[2];
+-        /* Fullpel MV range for motion search */
+-        int     mv_min_fpel[2];
+-        int     mv_max_fpel[2];
+-
+-        /* neighboring MBs */
+-        unsigned int i_neighbour;
+-        unsigned int i_neighbour8[4];       /* neighbours of each 8x8 or 4x4 block that are available */
+-        unsigned int i_neighbour4[16];      /* at the time the block is coded */
+-        unsigned int i_neighbour_intra;     /* for constrained intra pred */
+-        unsigned int i_neighbour_frame;     /* ignoring slice boundaries */
+-        int     i_mb_type_top;
+-        int     i_mb_type_left;
+-        int     i_mb_type_topleft;
++        int     i_cbp_chroma;
++        int     i_cbp_luma;
+         int     i_mb_type_topright;
+-        int     i_mb_prev_xy;
++        int     i_me_method;
++        int     i_psy_trellis; /* Psy trellis strength--fixed point value*/
++        int     i_subpel_refine;
++        int ref_blind_dupe; /* The index of the blind reference frame duplicate. */
++        int16_t (*mvr[2][32])[2];           /* 16x16 mv for each possible ref */
++        int8_t  *skipbp;                    /* block pattern for SKIP or DIRECT (sub)mbs. B-frames + cabac only */
++        int     b_direct_auto_read; /* take stats for --direct auto from the 2pass log */
++        int b_reencode_mb;
++        int     i_chroma_pred_mode;
++        int     i_mb_count;                 /* number of mbs in a frame */
+         int     i_mb_left_xy;
++        int     i_mb_stride;
+         int     i_mb_top_xy;
+-        int     i_mb_topleft_xy;
+         int     i_mb_topright_xy;
+-
+-        /**** thread synchronization ends here ****/
+-        /* subsequent variables are either thread-local or constant,
+-         * and won't be copied from one thread to another */
+-
+-        /* mb table */
+-        int8_t  *type;                      /* mb type */
+-        uint8_t *partition;                 /* mb partition */
+-        int8_t  *qp;                        /* mb qp */
++        int     i_mb_type_topleft;
++        int     i_mb_x;
++        int     i_mb_xy;
++        int     i_mb_y;
++        unsigned int i_neighbour_frame;     /* ignoring slice boundaries */
++        ALIGNED_4( uint8_t i_sub_partition[4] );
++        int8_t (*bipred_weight)[4];
++        int     i_trellis_lambda2[2][2]; /* [luma,chroma][inter,intra] */
++        int     mv_max[2];
++        int     mv_max_spel[2];
++        int     mv_min[2];
++        int     mv_min_spel[2];
++        int     b_direct_auto_write; /* analyse direct modes, to use and/or save */
++        int     b_lossless;
++        int     b_noise_reduction;
++        int b_skip_mc;
++        int     b_transform_8x8;
++        int     b_trellis;
++        int     b_variable_qp; /* whether qp is allowed to vary per macroblock */
++        int     i_chroma_lambda2_offset;
++        int     i_chroma_qp;
++        int     i_intra16x16_pred_mode;
++        int     i_mb_topleft_xy;
++        int     i_partition;
++        int     i_psy_rd; /* Psy RD strength--fixed point value*/
++        int     i_psy_rd_lambda;
++        int     i_qp;       /* current qp */
++        int i_skip_intra;
++        int     i_type;
++        int ip_offset; /* Used by PIR to offset the quantizer of intra-refresh blocks. */
++        uint8_t (*mvd[2])[8][2];            /* absolute value of mb mv difference with predict, clipped to [0,33]. set to 0 if intra. cabac only */
+         int16_t *cbp;                       /* mb cbp: 0x0?: luma, 0x?0: chroma, 0x100: luma dc, 0x0200 and 0x0400: chroma dc  (all set for PCM)*/
++        int8_t  *chroma_pred_mode;          /* chroma_pred_mode. cabac only. for non intra I_PRED_CHROMA_DC(0) */
++        int8_t  *type;                      /* mb type */
+         int8_t  (*intra4x4_pred_mode)[8];   /* intra4x4 pred mode. for non I4x4 set to I_PRED_4x4_DC(2) */
+                                             /* actually has only 7 entries; set to 8 for write-combining optimizations */
+         uint8_t (*non_zero_count)[16+4+4];  /* nzc. for I_PCM set to 16 */
+-        int8_t  *chroma_pred_mode;          /* chroma_pred_mode. cabac only. for non intra I_PRED_CHROMA_DC(0) */
++        unsigned int i_neighbour4[16];      /* at the time the block is coded */
++        unsigned int i_neighbour8[4];       /* neighbours of each 8x8 or 4x4 block that are available */
++        int     i_b4_stride;
++        int     i_b4_xy;
++        int     i_b8_stride;
++        int     i_b8_xy;
++        int     i_mb_type_left;
++        int     i_mb_type_top;
++        unsigned int i_neighbour;
++        unsigned int i_neighbour_intra;     /* for constrained intra pred */
+         int16_t (*mv[2])[2];                /* mb mv. set to 0 for intra mb */
+-        uint8_t (*mvd[2])[8][2];            /* absolute value of mb mv difference with predict, clipped to [0,33]. set to 0 if intra. cabac only */
+         int8_t   *ref[2];                   /* mb ref. set to -1 if non used (intra or Lx only) */
+-        int16_t (*mvr[2][32])[2];           /* 16x16 mv for each possible ref */
+-        int8_t  *skipbp;                    /* block pattern for SKIP or DIRECT (sub)mbs. B-frames + cabac only */
+         int8_t  *mb_transform_size;         /* transform_size_8x8_flag of each mb */
++        int8_t  *qp;                        /* mb qp */
+         uint16_t *slice_table;              /* sh->first_mb of the slice that the indexed mb is part of
+                                              * NOTE: this will fail on resolutions above 2^16 MBs... */
+-
+-         /* buffer for weighted versions of the reference frames */
++        uint8_t *partition;                 /* mb partition */
++        int     i_last_dqp; /* last delta qp */
++        int     i_last_qp;  /* last qp */
++        int     i_mb_prev_xy;
++        int8_t deblock_ref_table[32+2];
++#define deblock_ref_table(x) h->mb.deblock_ref_table[(x)+2]
++        /* maps fref1[0]'s ref indices into the current list0 */
++#define map_col_to_list0(col) h->mb.map_col_to_list0[(col)+2]
++        int8_t  map_col_to_list0[18];
+         uint8_t *p_weight_buf[16];
+-
+-        /* current value */
+-        int     i_type;
+-        int     i_partition;
+-        ALIGNED_4( uint8_t i_sub_partition[4] );
+-        int     b_transform_8x8;
+-
+-        int     i_cbp_luma;
+-        int     i_cbp_chroma;
+-
+-        int     i_intra16x16_pred_mode;
+-        int     i_chroma_pred_mode;
+-
+-        /* skip flags for i4x4 and i8x8
+-         * 0 = encode as normal.
+-         * 1 (non-RD only) = the DCT is still in h->dct, restore fdec and skip reconstruction.
+-         * 2 (RD only) = the DCT has since been overwritten by RD; restore that too. */
+-        int i_skip_intra;
+-        /* skip flag for motion compensation */
+-        /* if we've already done MC, we don't need to do it again */
+-        int b_skip_mc;
+-        /* set to true if we are re-encoding a macroblock. */
+-        int b_reencode_mb;
+-        int ip_offset; /* Used by PIR to offset the quantizer of intra-refresh blocks. */
++        int16_t dist_scale_factor_buf[2][32][4];
++        int8_t bipred_weight_buf[2][32][4];
+ 
+         struct
+         {
+@@ -702,38 +671,8 @@ struct x264_t
+             int     i_cbp_top;
+             int     i_cbp_left;
+         } cache;
+-
+-        /* */
+-        int     i_qp;       /* current qp */
+-        int     i_chroma_qp;
+-        int     i_last_qp;  /* last qp */
+-        int     i_last_dqp; /* last delta qp */
+-        int     b_variable_qp; /* whether qp is allowed to vary per macroblock */
+-        int     b_lossless;
+-        int     b_direct_auto_read; /* take stats for --direct auto from the 2pass log */
+-        int     b_direct_auto_write; /* analyse direct modes, to use and/or save */
+-
+-        /* lambda values */
+-        int     i_trellis_lambda2[2][2]; /* [luma,chroma][inter,intra] */
+-        int     i_psy_rd_lambda;
+-        int     i_chroma_lambda2_offset;
+-
+-        /* B_direct and weighted prediction */
+-        int16_t dist_scale_factor_buf[2][32][4];
+-        int16_t (*dist_scale_factor)[4];
+-        int8_t bipred_weight_buf[2][32][4];
+-        int8_t (*bipred_weight)[4];
+-        /* maps fref1[0]'s ref indices into the current list0 */
+-#define map_col_to_list0(col) h->mb.map_col_to_list0[(col)+2]
+-        int8_t  map_col_to_list0[18];
+-        int ref_blind_dupe; /* The index of the blind reference frame duplicate. */
+-        int8_t deblock_ref_table[32+2];
+-#define deblock_ref_table(x) h->mb.deblock_ref_table[(x)+2]
+     } mb;
+ 
+-    /* rate control encoding only */
+-    x264_ratecontrol_t *rc;
+-
+     /* stats */
+     struct
+     {
+@@ -792,33 +731,20 @@ struct x264_t
+ 
+     } stat;
+ 
+-    ALIGNED_16( uint32_t nr_residual_sum[2][64] );
+-    ALIGNED_16( uint16_t nr_offset[2][64] );
+-    uint32_t        nr_count[2];
+ 
+     /* Buffers that are allocated per-thread even in sliced threads. */
+-    void *scratch_buffer; /* for any temporary storage that doesn't want repeated malloc */
+-    uint8_t *intra_border_backup[2][3]; /* bottom pixels of the previous mb row, used for intra prediction after the framebuffer has been deblocked */
+-    uint8_t (*deblock_strength[2])[2][4][4];
+ 
+     /* CPU functions dependents */
+-    x264_predict_t      predict_16x16[4+3];
+-    x264_predict_t      predict_8x8c[4+3];
+-    x264_predict8x8_t   predict_8x8[9+3];
+-    x264_predict_t      predict_4x4[9+3];
+-    x264_predict_8x8_filter_t predict_8x8_filter;
+ 
+     x264_pixel_function_t pixf;
+     x264_mc_functions_t   mc;
+     x264_dct_function_t   dctf;
+-    x264_zigzag_function_t zigzagf;
+     x264_quant_function_t quantf;
+     x264_deblock_function_t loopf;
+ 
+ #ifdef HAVE_VISUALIZE
+     struct visualize_t *visualize;
+ #endif
+-    x264_lookahead_t *lookahead;
+ };
+ 
+ // included at the end because it needs x264_t
+diff --git a/benchspec/CPU/525.x264_r/src/x264_src/common/frame.h b/benchspec/CPU/525.x264_r/src/x264_src/common/frame.h
+index 91d27b5..091960d 100644
+--- a/benchspec/CPU/525.x264_r/src/x264_src/common/frame.h
++++ b/benchspec/CPU/525.x264_r/src/x264_src/common/frame.h
+@@ -30,119 +30,92 @@
+ 
+ typedef struct x264_frame
+ {
+-    /* */
++    #define LOWRES_COST_MASK ((1<<14)-1)
++    #define LOWRES_COST_SHIFT 14
++    uint8_t *plane[3];
++    float   *f_qp_offset;
++    int     *i_row_bits;
++    uint16_t *integral;
++    int     i_stride[3];
++    int     b_kept_as_ref;
++    int16_t (*lowres_mvs[2][X264_BFRAME_MAX+1])[2];
++    uint8_t *filtered[4]; /* plane[0], H, V, HV */
++    int16_t (*mv16x16)[2];
++    int     i_ref[2];
++    int     i_frame;     /* Presentation frame number */
++    int     i_plane;
+     int     i_poc;
+-    int     i_type;
++    int16_t inv_ref_poc[2]; // inverse values of ref0 poc to avoid divisions in temporal MV prediction
++    int16_t (*mv[2])[2];
++    int8_t  *ref[2];
++    float   *f_qp_offset_aq;
++    int8_t  *mb_type;
++    uint16_t *i_propagate_cost;
++    uint8_t *mb_partition;
++    uint64_t i_pixel_ssd;
++    x264_param_t *param;
++    int     b_intra_calculated;
++    int     b_keyframe;
++    int     b_scenecut; /* Set to zero if the frame cannot possibly be part of a real scenecut. */
++    int     i_frame_num; /* 7.4.3 frame_num */
++    int     i_lines_completed; /* in pixels */
++    int     i_lines_lowres;
++    int     i_lines_weighted; /* FIXME: this only supports weighting of one reference frame */
+     int     i_qpplus1;
+-    int64_t i_pts;
+-    int64_t i_reordered_pts;
++    int     i_stride_lowres;
++    int     i_type;
++    int     i_width_lowres;
++    uint32_t i_pixel_sum;
++    int     *i_row_satds[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2];
++    uint16_t (*lowres_costs[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2]);
++    uint8_t *lowres[4]; /* half-size copy of input frame: Orig, H, V, HV */
++    uint16_t *i_intra_cost;
++    uint16_t *i_inv_qscale_factor;
+     int     i_duration;  /* in SPS time_scale units (i.e 2 * timebase units) used for vfr */
+-    int     i_cpb_duration;
++    int     i_field_cnt; /* Presentation field count */
++    int     i_pic_struct;
++    int     i_reference_count; /* number of threads using this frame (not necessarily the number of pointers) */
++    int     i_cost_est[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2];
++    int     i_cost_est_aq[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2];
++    int     i_intra_mbs[X264_BFRAME_MAX+2];
++    uint8_t *weighted[16]; /* plane[0] weighted of the reference frames */
++    int     *i_row_satd;
++    int64_t i_reordered_pts;
++    int     i_lines[3];
++    int     i_width[3];
++    float   f_qp_avg_rc; /* QPs as decided by ratecontrol */
+     int     i_cpb_delay; /* in SPS time_scale units (i.e 2 * timebase units) */
++    int     i_cpb_duration;
+     int     i_dpb_output_delay;
+-    x264_param_t *param;
+-
+-    int     i_frame;     /* Presentation frame number */
++    int     i_poc_l0ref0; /* poc of first refframe in L0, used to check if direct temporal is possible */
++    int     i_satd; // the i_cost_est of the selected frametype
++    int64_t i_pts;
++    float   f_qp_avg_aq; /* QPs as decided by AQ in addition to ratecontrol */
++    int b_duplicate;
+     int     i_coded;     /* Coded frame number */
+-    int     i_field_cnt; /* Presentation field count */
+-    int     i_frame_num; /* 7.4.3 frame_num */
+-    int     b_kept_as_ref;
+-    int     i_pic_struct;
+-    int     b_keyframe;
++    int i_coded_fields_lookahead;
++    int i_cpb_delay_lookahead;
++    x264_hrd_t hrd_timing;
+     uint8_t b_fdec;
+     uint8_t b_last_minigop_bframe; /* this frame is the last b in a sequence of bframes */
+     uint8_t i_bframes;   /* number of bframes following this nonb in coded order */
+-    float   f_qp_avg_rc; /* QPs as decided by ratecontrol */
+-    float   f_qp_avg_aq; /* QPs as decided by AQ in addition to ratecontrol */
+-    int     i_poc_l0ref0; /* poc of first refframe in L0, used to check if direct temporal is possible */
+-
+-    /* YUV buffer */
+-    int     i_plane;
+-    int     i_stride[3];
+-    int     i_width[3];
+-    int     i_lines[3];
+-    int     i_stride_lowres;
+-    int     i_width_lowres;
+-    int     i_lines_lowres;
+-    uint8_t *plane[3];
+-    uint8_t *filtered[4]; /* plane[0], H, V, HV */
+-    uint8_t *lowres[4]; /* half-size copy of input frame: Orig, H, V, HV */
+-    uint16_t *integral;
+-
+-    /* for unrestricted mv we allocate more data than needed
+-     * allocated data are stored in buffer */
++    uint8_t i_planned_type[X264_LOOKAHEAD_MAX+1];
++    int     ref_poc[2][16];
++    float   f_weighted_cost_delta[X264_BFRAME_MAX+2];
+     uint8_t *buffer[4];
+     uint8_t *buffer_lowres[4];
+-
+     x264_weight_t weight[16][3]; /* [ref_index][plane] */
+-    uint8_t *weighted[16]; /* plane[0] weighted of the reference frames */
+-    int b_duplicate;
++    float   *f_row_qp;
+     struct x264_frame *orig;
+-
+-    /* motion data */
+-    int8_t  *mb_type;
+-    uint8_t *mb_partition;
+-    int16_t (*mv[2])[2];
+-    int16_t (*mv16x16)[2];
+-    int16_t (*lowres_mvs[2][X264_BFRAME_MAX+1])[2];
+-
+-    /* Stored as (lists_used << LOWRES_COST_SHIFT) + (cost).
+-     * Doesn't need special addressing for intra cost because
+-     * lists_used is guaranteed to be zero in that cast. */
+-    uint16_t (*lowres_costs[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2]);
+-    #define LOWRES_COST_MASK ((1<<14)-1)
+-    #define LOWRES_COST_SHIFT 14
+-
++    float   f_pir_position;
++    x264_pthread_cond_t  cv;
++    int     i_frames_since_pir;
++    int     i_pir_end_col;
++    int     i_pir_start_col;
++    x264_pthread_mutex_t mutex;
+     int     *lowres_mv_costs[2][X264_BFRAME_MAX+1];
+-    int8_t  *ref[2];
+-    int     i_ref[2];
+-    int     ref_poc[2][16];
+-    int16_t inv_ref_poc[2]; // inverse values of ref0 poc to avoid divisions in temporal MV prediction
+-
+-    /* for adaptive B-frame decision.
+-     * contains the SATD cost of the lowres frame encoded in various modes
+-     * FIXME: how big an array do we need? */
+-    int     i_cost_est[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2];
+-    int     i_cost_est_aq[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2];
+-    int     i_satd; // the i_cost_est of the selected frametype
+-    int     i_intra_mbs[X264_BFRAME_MAX+2];
+-    int     *i_row_satds[X264_BFRAME_MAX+2][X264_BFRAME_MAX+2];
+-    int     *i_row_satd;
+-    int     *i_row_bits;
+-    float   *f_row_qp;
+-    float   *f_qp_offset;
+-    float   *f_qp_offset_aq;
+-    int     b_intra_calculated;
+-    uint16_t *i_intra_cost;
+-    uint16_t *i_propagate_cost;
+-    uint16_t *i_inv_qscale_factor;
+-    int     b_scenecut; /* Set to zero if the frame cannot possibly be part of a real scenecut. */
+-    float   f_weighted_cost_delta[X264_BFRAME_MAX+2];
+-    uint32_t i_pixel_sum;
+-    uint64_t i_pixel_ssd;
+-
+-    /* hrd */
+-    x264_hrd_t hrd_timing;
+-
+-    /* vbv */
+-    uint8_t i_planned_type[X264_LOOKAHEAD_MAX+1];
+     int i_planned_satd[X264_LOOKAHEAD_MAX+1];
+     double f_planned_cpb_duration[X264_LOOKAHEAD_MAX+1];
+-    int i_coded_fields_lookahead;
+-    int i_cpb_delay_lookahead;
+-
+-    /* threading */
+-    int     i_lines_completed; /* in pixels */
+-    int     i_lines_weighted; /* FIXME: this only supports weighting of one reference frame */
+-    int     i_reference_count; /* number of threads using this frame (not necessarily the number of pointers) */
+-    x264_pthread_mutex_t mutex;
+-    x264_pthread_cond_t  cv;
+-
+-    /* periodic intra refresh */
+-    float   f_pir_position;
+-    int     i_pir_start_col;
+-    int     i_pir_end_col;
+-    int     i_frames_since_pir;
+ } x264_frame_t;
+ 
+ /* synchronized frame list */
+diff --git a/benchspec/CPU/525.x264_r/src/x264_src/encoder/analyse.c b/benchspec/CPU/525.x264_r/src/x264_src/encoder/analyse.c
+index 51bb9c8..2bee812 100644
+--- a/benchspec/CPU/525.x264_r/src/x264_src/encoder/analyse.c
++++ b/benchspec/CPU/525.x264_r/src/x264_src/encoder/analyse.c
+@@ -73,67 +73,49 @@ typedef struct
+ 
+ typedef struct
+ {
+-    /* conduct the analysis using this lamda and QP */
+-    int i_lambda;
+-    int i_lambda2;
+-    int i_qp;
+     uint16_t *p_cost_mv;
+-    uint16_t *p_cost_ref[2];
++    int i_mb_partition8x16[2];
++    int b_direct_available;
++    int i_cost16x16bi; /* used the same ref and mv as l0 and l1 (at least for now) */
++    int i_cost16x8bi;
++    int i_cost8x16bi;
++    int i_cost8x8bi;
++    int i_lambda2;
+     int i_mbrd;
+-
+-
+-    /* I: Intra part */
+-    /* Take some shortcuts in intra search if intra is deemed unlikely */
+-    int b_fast_intra;
+-    int b_force_intra; /* For Periodic Intra Refresh.  Only supported in P-frames. */
+-    int b_try_skip;
+-
+-    /* Luma part */
+-    int i_satd_i16x16;
+-    int i_satd_i16x16_dir[7];
+     int i_predict16x16;
+-
+-    int i_satd_i8x8;
+-    int i_cbp_i8x8_luma;
+-    int i_satd_i8x8_dir[12][4];
+-    int i_predict8x8[4];
+-
++    int i_rd16x16bi;
++    int i_satd_i16x16;
+     int i_satd_i4x4;
+-    int i_predict4x4[16];
+-
+-    int i_satd_pcm;
+-
+-    /* Chroma part */
+-    int i_satd_i8x8chroma;
++    int i_satd_i8x8;
+     int i_satd_i8x8chroma_dir[7];
+-    int i_predict8x8chroma;
+-
+-    /* II: Inter part P/B frame */
+-    x264_mb_analysis_list_t l0;
+-    x264_mb_analysis_list_t l1;
+-
+-    int i_cost16x16bi; /* used the same ref and mv as l0 and l1 (at least for now) */
+-    int i_cost16x16direct;
+-    int i_cost8x8bi;
+     int i_cost8x8direct[4];
+-    int i_satd8x8[3][4]; /* [L0,L1,BI][8x8 0..3] SATD only */
+-    int i_cost_est16x8[2]; /* Per-partition estimated cost */
+-    int i_cost_est8x16[2];
+-    int i_cost16x8bi;
+-    int i_cost8x16bi;
+-    int i_rd16x16bi;
++    int i_lambda;
++    int i_predict8x8chroma;
+     int i_rd16x16direct;
+-    int i_rd16x8bi;
+-    int i_rd8x16bi;
+     int i_rd8x8bi;
+-
++    int i_satd_i8x8chroma;
++    int i_satd8x8[3][4]; /* [L0,L1,BI][8x8 0..3] SATD only */
+     int i_mb_partition16x8[2]; /* mb_partition_e */
+-    int i_mb_partition8x16[2];
++    int i_cost16x16direct;
++    int i_qp;
++    uint16_t *p_cost_ref[2];
++    int i_satd_i16x16_dir[7];
++    int b_fast_intra;
++    int i_cbp_i8x8_luma;
+     int i_mb_type16x8; /* mb_class_e */
++    int i_rd16x8bi;
++    int i_rd8x16bi;
++    int i_satd_i8x8_dir[12][4];
++    int i_predict8x8[4];
++    int i_cost_est16x8[2]; /* Per-partition estimated cost */
++    int i_cost_est8x16[2];
++    int b_force_intra; /* For Periodic Intra Refresh.  Only supported in P-frames. */
++    int b_try_skip;
+     int i_mb_type8x16;
+-
+-    int b_direct_available;
+-
++    int i_satd_pcm;
++    int i_predict4x4[16];
++    x264_mb_analysis_list_t l0;
++    x264_mb_analysis_list_t l1;
+ } x264_mb_analysis_t;
+ 
+ /* lambda = pow(2,qp/6-2) */
+diff --git a/benchspec/CPU/525.x264_r/src/x264_src/encoder/me.h b/benchspec/CPU/525.x264_r/src/x264_src/encoder/me.h
+index 031819b..a52c251 100644
+--- a/benchspec/CPU/525.x264_r/src/x264_src/encoder/me.h
++++ b/benchspec/CPU/525.x264_r/src/x264_src/encoder/me.h
+@@ -31,25 +31,20 @@ typedef struct
+ {
+     /* aligning the first member is a gcc hack to force the struct to be
+      * 16 byte aligned, as well as force sizeof(struct) to be a multiple of 16 */
+-    /* input */
+-    ALIGNED_16( int i_pixel );   /* PIXEL_WxH */
++    ALIGNED_16( uint8_t *p_fenc[3] );
+     uint16_t *p_cost_mv; /* lambda * nbits for each possible mv */
+-    int      i_ref_cost;
+-    int      i_ref;
+-    const x264_weight_t *weight;
+-
+-    uint8_t *p_fref[6];
+     uint8_t *p_fref_w;
+-    uint8_t *p_fenc[3];
+-    uint16_t *integral;
++    const x264_weight_t *weight;
+     int      i_stride[2];
+-
++    int i_pixel;   /* PIXEL_WxH */
+     ALIGNED_4( int16_t mvp[2] );
+-
+-    /* output */
+-    int cost_mv;        /* lambda * nbits for the chosen mv */
++    uint8_t *p_fref[6];
+     int cost;           /* satd + lambda * nbits */
++    int cost_mv;        /* lambda * nbits for the chosen mv */
++    int      i_ref;
+     ALIGNED_4( int16_t mv[2] );
++    uint16_t *integral;
++    int      i_ref_cost;
+ } ALIGNED_16( x264_me_t );
+ 
+ typedef struct {
+diff --git a/benchspec/CPU/557.xz_r/src/liblzma/lz/lz_encoder.h b/benchspec/CPU/557.xz_r/src/liblzma/lz/lz_encoder.h
+index 741c453..bd7b481 100644
+--- a/benchspec/CPU/557.xz_r/src/liblzma/lz/lz_encoder.h
++++ b/benchspec/CPU/557.xz_r/src/liblzma/lz/lz_encoder.h
+@@ -27,28 +27,27 @@ typedef struct {
+ 
+ typedef struct lzma_mf_s lzma_mf;
+ struct lzma_mf_s {
+-	///////////////
+-	// In Window //
+-	///////////////
++	uint32_t *hash;
++	uint32_t *son;
+ 
+ 	/// Pointer to buffer with data to be compressed
+ 	uint8_t *buffer;
+ 
+-	/// Total size of the allocated buffer (that is, including all
+-	/// the extra space)
+-	uint32_t size;
++	/// When running out of input, binary tree match finders need to know
++	/// if it is due to flushing or finishing. The action is used also
++	/// by the LZ-based encoders themselves.
++	lzma_action action;
+ 
+-	/// Number of bytes that must be kept available in our input history.
+-	/// That is, once keep_size_before bytes have been processed,
+-	/// buffer[read_pos - keep_size_before] is the oldest byte that
+-	/// must be available for reading.
+-	uint32_t keep_size_before;
++	uint32_t cyclic_pos;
++	uint32_t cyclic_size; // Must be dictionary size + 1.
+ 
+-	/// Number of bytes that must be kept in buffer after read_pos.
+-	/// That is, read_pos <= write_pos - keep_size_after as long as
+-	/// action is LZMA_RUN; when action != LZMA_RUN, read_pos is allowed
+-	/// to reach write_pos so that the last bytes get encoded too.
+-	uint32_t keep_size_after;
++	/// Maximum number of loops in the match finder
++	uint32_t depth;
++
++	uint32_t hash_mask;
++
++	/// Maximum length of a match that the match finder will try to find.
++	uint32_t nice_len;
+ 
+ 	/// Match finders store locations of matches using 32-bit integers.
+ 	/// To avoid adjusting several megabytes of integers every time the
+@@ -57,15 +56,6 @@ struct lzma_mf_s {
+ 	/// is the byte pointed by value_in_hash_table.
+ 	uint32_t offset;
+ 
+-	/// buffer[read_pos] is the next byte to run through the match
+-	/// finder. This is incremented in the match finder once the byte
+-	/// has been processed.
+-	uint32_t read_pos;
+-
+-	/// Number of bytes that have been ran through the match finder, but
+-	/// which haven't been encoded by the LZ-based encoder yet.
+-	uint32_t read_ahead;
+-
+ 	/// As long as read_pos is less than read_limit, there is enough
+ 	/// input available in buffer for at least one encoding loop.
+ 	///
+@@ -74,19 +64,16 @@ struct lzma_mf_s {
+ 	/// calculating the value for keep_size_after.
+ 	uint32_t read_limit;
+ 
++	/// buffer[read_pos] is the next byte to run through the match
++	/// finder. This is incremented in the match finder once the byte
++	/// has been processed.
++	uint32_t read_pos;
++
+ 	/// buffer[write_pos] is the first byte that doesn't contain valid
+ 	/// uncompressed data; that is, the next input byte will be copied
+ 	/// to buffer[write_pos].
+ 	uint32_t write_pos;
+ 
+-	/// Number of bytes not hashed before read_pos. This is needed to
+-	/// restart the match finder after LZMA_SYNC_FLUSH.
+-	uint32_t pending;
+-
+-	//////////////////
+-	// Match Finder //
+-	//////////////////
+-
+ 	/// Find matches. Returns the number of distance-length pairs written
+ 	/// to the matches array. This is called only via lzma_mf_find().
+ 	uint32_t (*find)(lzma_mf *mf, lzma_match *matches);
+@@ -96,30 +83,37 @@ struct lzma_mf_s {
+ 	/// This is called only via mf_skip().
+ 	void (*skip)(lzma_mf *mf, uint32_t num);
+ 
+-	uint32_t *hash;
+-	uint32_t *son;
+-	uint32_t cyclic_pos;
+-	uint32_t cyclic_size; // Must be dictionary size + 1.
+-	uint32_t hash_mask;
++	/// Number of elements in hash[]
++	uint32_t hash_size_sum;
+ 
+-	/// Maximum number of loops in the match finder
+-	uint32_t depth;
++	/// Number of bytes that must be kept in buffer after read_pos.
++	/// That is, read_pos <= write_pos - keep_size_after as long as
++	/// action is LZMA_RUN; when action != LZMA_RUN, read_pos is allowed
++	/// to reach write_pos so that the last bytes get encoded too.
++	uint32_t keep_size_after;
+ 
+-	/// Maximum length of a match that the match finder will try to find.
+-	uint32_t nice_len;
++	/// Number of bytes that must be kept available in our input history.
++	/// That is, once keep_size_before bytes have been processed,
++	/// buffer[read_pos - keep_size_before] is the oldest byte that
++	/// must be available for reading.
++	uint32_t keep_size_before;
+ 
+ 	/// Maximum length of a match supported by the LZ-based encoder.
+ 	/// If the longest match found by the match finder is nice_len,
+ 	/// mf_find() tries to expand it up to match_len_max bytes.
+ 	uint32_t match_len_max;
+ 
+-	/// When running out of input, binary tree match finders need to know
+-	/// if it is due to flushing or finishing. The action is used also
+-	/// by the LZ-based encoders themselves.
+-	lzma_action action;
++	/// Number of bytes not hashed before read_pos. This is needed to
++	/// restart the match finder after LZMA_SYNC_FLUSH.
++	uint32_t pending;
+ 
+-	/// Number of elements in hash[]
+-	uint32_t hash_size_sum;
++	/// Number of bytes that have been ran through the match finder, but
++	/// which haven't been encoded by the LZ-based encoder yet.
++	uint32_t read_ahead;
++
++	/// Total size of the allocated buffer (that is, including all
++	/// the extra space)
++	uint32_t size;
+ 
+ 	/// Number of elements in son[]
+ 	uint32_t sons_count;
+-- 
+2.32.0
+
+diff --git a/benchspec/CPU/531.deepsjeng_r/src/state.h b/benchspec/CPU/531.deepsjeng_r/src/state.h
+index c3c01b1..e73ab5e 100644
+--- a/benchspec/CPU/531.deepsjeng_r/src/state.h
++++ b/benchspec/CPU/531.deepsjeng_r/src/state.h
+@@ -9,28 +9,47 @@
+     defines
+ */
+ struct state_t {
+-    /* who am i */
+-    int threadid;    
+-    /* board state */
+-    int sboard[64];
+-    BITBOARD All;         
+-    BITBOARD BlackPieces, WhitePieces;
+     BITBOARD BitBoard[13];
++    BITBOARD All;         
++    BITBOARD hash;
++    BITBOARD qnodes;
++    int bking_start;
++    int ply;
++    int threadid;    
++    int white_to_move;
++    int wking_start;
++    unsigned int TTColls;   
++    unsigned int TTHits;
++    unsigned int TTProbes;
++    unsigned int TTStores;
+ 
++    BITBOARD BlackPieces;
++    BITBOARD WhitePieces;
++    BITBOARD pawnhash;         
+     int Material;
++    int blrook_start;
++    int brrook_start;        
++    int ep_square;
++    int fifty;    
+     int psq_score;
++    int wlrook_start;
++    int wrrook_start;
++
++    int sboard[64];
++
+     int npieces[13];
++    int bking_loc;
+     int castleflag;
++    int wking_loc;
+ 
+-    int ep_square, white_to_move, wking_loc, bking_loc;
+-    int ply, fifty;    
+-    
+-    BITBOARD hash;
+-    BITBOARD pawnhash;         
+-    
+-    move_x path_x[PV_BUFF];
+-    move_s path[PV_BUFF];
++    BITBOARD hash_history[GAME_LENGTH];  
++    BITBOARD nodes;
++    int checks[PV_BUFF];       
+     int    plyeval[PV_BUFF];    
++    move_s path[PV_BUFF];
++    int maxply;
++
++    move_x path_x[PV_BUFF];
+ 
+     /* search state */
+     struct {
+@@ -39,34 +58,6 @@ struct state_t {
+         move_s killer3;
+         move_s killer4;
+     } killerstack[PV_BUFF];
+-
+-    BITBOARD nodes, qnodes;
+-    int maxply;
+-    int checks[PV_BUFF];       
+-    
+-    /* 
+-        search statistics must be in state
+-        so they are CPU-local
+-    */
+-    unsigned int TTProbes;
+-    unsigned int TTHits;
+-    unsigned int TTStores;
+-    unsigned int TTColls;   
+- 
+-    /* 
+-        chess960 mode, these are read only
+-        but handy to have in state_t
+-    */
+-    int wking_start;
+-    int bking_start;
+-    int wlrook_start;
+-    int wrrook_start;
+-    int blrook_start;
+-    int brrook_start;        
+-    /*
+-        this serves a second purpose as padding
+-    */        
+-    BITBOARD hash_history[GAME_LENGTH];  
+ };
+ 
+ struct gamestate_t {    
+diff --git a/benchspec/CPU/541.leela_r/src/FastBoard.h b/benchspec/CPU/541.leela_r/src/FastBoard.h
+index cd9f91b..ba6c8fa 100644
+--- a/benchspec/CPU/541.leela_r/src/FastBoard.h
++++ b/benchspec/CPU/541.leela_r/src/FastBoard.h
+@@ -135,33 +135,32 @@ public:
+     static bool starpoint(int size, int point);
+     static bool starpoint(int size, int x, int y);                           
+             
+-    std::tr1::array<unsigned short, MAXSQ> m_empty;       /* empty squares */
+-    std::tr1::array<unsigned short, MAXSQ> m_empty_idx;   /* indexes of square */
+-    int m_empty_cnt;                                      /* count of empties */
+      
+-    int m_tomove;       
+-    int m_maxsq;       
+     
+-protected:
+     /*
+         bit masks to detect eyes on neighbors
+     */        
+     static const std::tr1::array<int,      2> s_eyemask; 
+     static const std::tr1::array<square_t, 4> s_cinvert; /* color inversion */
+     
++    int m_boardsize;    
++    int m_empty_cnt;                                      /* count of empties */
++    int m_maxsq;       
++    int m_tomove;       
++    std::tr1::array<int, 8>          m_extradirs;   /* movement directions 8 way */
++    std::tr1::array<int, 4>          m_dirs;        /* movement directions 4 way */    
++    std::tr1::array<unsigned short, MAXSQ> m_empty;       /* empty squares */
++    std::tr1::array<unsigned short, MAXSQ> m_empty_idx;   /* indexes of square */
+     std::tr1::array<square_t,  MAXSQ>           m_square;      /* board contents */            
+     std::tr1::array<unsigned short, MAXSQ+1>    m_next;        /* next stone in string */ 
+     std::tr1::array<unsigned short, MAXSQ+1>    m_parent;      /* parent node of string */            
+     std::tr1::array<unsigned short, MAXSQ+1>    m_libs;        /* liberties per string parent */        
+     std::tr1::array<unsigned short, MAXSQ+1>    m_stones;      /* stones per string parent */        
+     std::tr1::array<unsigned short, MAXSQ>      m_neighbours;  /* counts of neighboring stones */       
+-    std::tr1::array<int, 4>          m_dirs;        /* movement directions 4 way */    
+-    std::tr1::array<int, 8>          m_extradirs;   /* movement directions 8 way */
++    std::vector<int>                 m_critical;    /* queue of critical points */    
+     std::tr1::array<int, 2>          m_prisoners;   /* prisoners per color */
+     std::tr1::array<int, 2>          m_totalstones; /* stones per color */                 
+-    std::vector<int>                 m_critical;    /* queue of critical points */    
+ 
+-    int m_boardsize;    
+         
+     int count_neighbours(const int color, const int i);   
+     void merge_strings(const int ip, const int aip);    
+diff --git a/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h b/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
+index 81810f9..98331ed 100644
+--- a/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
++++ b/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
+@@ -112,27 +112,25 @@ class SIM_API cMessage : public cOwnedObject
+     friend class cMessageHeap;
+ 
+   private:
+-    // note: fields are in an order that maximizes packing (minimizes sizeof(cMessage))
++    int heapindex;             // used by cMessageHeap (-1 if not on heap)
++    int frommod, fromgate;     // source module and gate IDs -- set internally
++    int tomod, togate;         // dest. module and gate IDs -- set internally
+     short msgkind;             // message kind -- 0>= user-defined meaning, <0 reserved
+     short prior;               // priority -- used for scheduling msgs with equal times
+     short srcprocid;           // reserved for use by parallel execution: id of source partition
++
+     cArray *parlistp;          // ptr to list of parameters
+     cObject *ctrlp;            // ptr to "control info"
+     void *contextptr;          // a stored pointer -- user-defined meaning, used with self-messages
+-
+-    int frommod, fromgate;     // source module and gate IDs -- set internally
+-    int tomod, togate;         // dest. module and gate IDs -- set internally
++    eventnumber_t prev_event_num; // event number of the sending/scheduling this message
+     simtime_t created;         // creation time -- set be constructor
+     simtime_t sent,delivd;     // time of sending & delivery -- set internally
+     simtime_t tstamp;          // time stamp -- user-defined meaning
+ 
+-    int heapindex;             // used by cMessageHeap (-1 if not on heap)
+     unsigned long insertordr;  // used by cMessageHeap
+-
+-    eventnumber_t prev_event_num; // event number of the sending/scheduling this message
+-
+     long msgid;                // a unique message identifier assigned upon message creation
+     long msgtreeid;            // a message identifier that is inherited by dup, if non dupped it is msgid
++
+     static long next_id;       // the next unique message identifier to be assigned upon message creation
+ 
+     // global variables for statistics
