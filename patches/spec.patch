@@ -522,6 +522,229 @@ index 806a71d..4a113ee 100644
  } network_t;
  
  typedef struct list_elem
+diff --git a/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h b/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
+index 81810f9..98331ed 100644
+--- a/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
++++ b/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
+@@ -112,27 +112,25 @@ class SIM_API cMessage : public cOwnedObject
+     friend class cMessageHeap;
+ 
+   private:
+-    // note: fields are in an order that maximizes packing (minimizes sizeof(cMessage))
++    int heapindex;             // used by cMessageHeap (-1 if not on heap)
++    int frommod, fromgate;     // source module and gate IDs -- set internally
++    int tomod, togate;         // dest. module and gate IDs -- set internally
+     short msgkind;             // message kind -- 0>= user-defined meaning, <0 reserved
+     short prior;               // priority -- used for scheduling msgs with equal times
+     short srcprocid;           // reserved for use by parallel execution: id of source partition
++
+     cArray *parlistp;          // ptr to list of parameters
+     cObject *ctrlp;            // ptr to "control info"
+     void *contextptr;          // a stored pointer -- user-defined meaning, used with self-messages
+-
+-    int frommod, fromgate;     // source module and gate IDs -- set internally
+-    int tomod, togate;         // dest. module and gate IDs -- set internally
++    eventnumber_t prev_event_num; // event number of the sending/scheduling this message
+     simtime_t created;         // creation time -- set be constructor
+     simtime_t sent,delivd;     // time of sending & delivery -- set internally
+     simtime_t tstamp;          // time stamp -- user-defined meaning
+ 
+-    int heapindex;             // used by cMessageHeap (-1 if not on heap)
+     unsigned long insertordr;  // used by cMessageHeap
+-
+-    eventnumber_t prev_event_num; // event number of the sending/scheduling this message
+-
+     long msgid;                // a unique message identifier assigned upon message creation
+     long msgtreeid;            // a message identifier that is inherited by dup, if non dupped it is msgid
++
+     static long next_id;       // the next unique message identifier to be assigned upon message creation
+ 
+     // global variables for statistics
+diff --git a/benchspec/CPU/523.xalancbmk_r/src/xercesc/internal/XMLReader.hpp b/benchspec/CPU/523.xalancbmk_r/src/xercesc/internal/XMLReader.hpp
+index eff16b3..11ca2ea 100644
+--- a/benchspec/CPU/523.xalancbmk_r/src/xercesc/internal/XMLReader.hpp
++++ b/benchspec/CPU/523.xalancbmk_r/src/xercesc/internal/XMLReader.hpp
+@@ -424,38 +424,38 @@ private:
+     //  fXMLVersion
+     //      Enum to indicate if this Reader is conforming to XML 1.0 or XML 1.1
+     // -----------------------------------------------------------------------
+-    unsigned int                fCharIndex;
+-    XMLCh                       fCharBuf[kCharBufSize];
+-    unsigned int                fCharsAvail;
+-    unsigned char               fCharSizeBuf[kCharBufSize];
+-    unsigned int                fCharOfsBuf[kCharBufSize];
++    XMLByte*                    fgCharCharsTable;
++    XMLCh*                      fPublicId;
+     XMLSSize_t                  fCurCol;
+     XMLSSize_t                  fCurLine;
+-    XMLRecognizer::Encodings    fEncoding;
+-    XMLCh*                      fEncodingStr;
+-    bool                        fForcedEncoding;
+-    bool                        fNoMore;
+-    XMLCh*                      fPublicId;
++    RefFrom                     fRefFrom;
++    Sources                     fSource;
++    XMLVersion                  fXMLVersion;
++    unsigned int                fCharIndex;
++    unsigned int                fCharsAvail;
+     unsigned int                fRawBufIndex;
+-    XMLByte                     fRawByteBuf[kRawBufSize];
+-    unsigned int                fRawBytesAvail;
+     unsigned int                fReaderNum;
+-    RefFrom                     fRefFrom;
++    bool                        fForcedEncoding;
++    bool                        fNoMore;
+     bool                        fSentTrailingSpace;
+-    Sources                     fSource;
+-    unsigned int                fSrcOfsBase;
+     bool                        fSrcOfsSupported;
+-    bool                        fCalculateSrcOfs;
+-    XMLCh*                      fSystemId;
++    XMLCh                       fCharBuf[kCharBufSize];
+     BinInputStream*             fStream;
+-    bool                        fSwapped;
+-    bool                        fThrowAtEnd;
++    MemoryManager*              fMemoryManager;
++    XMLCh*                      fEncodingStr;
++    XMLCh*                      fSystemId;
+     XMLTranscoder*              fTranscoder;
++    XMLRecognizer::Encodings    fEncoding;
+     Types                       fType;
+-    XMLByte*                    fgCharCharsTable;
++    unsigned int                fRawBytesAvail;
++    unsigned int                fSrcOfsBase;
++    bool                        fCalculateSrcOfs;
+     bool                        fNEL;
+-    XMLVersion                  fXMLVersion;
+-    MemoryManager*              fMemoryManager;
++    bool                        fSwapped;
++    bool                        fThrowAtEnd;
++    unsigned char               fCharSizeBuf[kCharBufSize];
++    unsigned int                fCharOfsBuf[kCharBufSize];
++    XMLByte                     fRawByteBuf[kRawBufSize];
+ };
+ 
+ 
+diff --git a/benchspec/CPU/523.xalancbmk_r/src/xercesc/internal/XMLScanner.hpp b/benchspec/CPU/523.xalancbmk_r/src/xercesc/internal/XMLScanner.hpp
+index 15de686..f4e60ee 100644
+--- a/benchspec/CPU/523.xalancbmk_r/src/xercesc/internal/XMLScanner.hpp
++++ b/benchspec/CPU/523.xalancbmk_r/src/xercesc/internal/XMLScanner.hpp
+@@ -721,68 +721,68 @@ protected:
+     //      Pluggable memory manager for dynamic allocation/deallocation.
+     //
+     // -----------------------------------------------------------------------
++    Grammar*                    fGrammar;
++    PSVIHandler*                fPSVIHandler;
++    RefVectorOf<XMLAttr>*       fAttrList;
++    XMLDocumentHandler*         fDocHandler;
++    XMLStringPool*              fURIStringPool;
++    XMLValidator*               fValidator;
++    int                         fErrorCount;
++    unsigned int                fEmptyNamespaceId;
++    GrammarResolver* const      fGrammarResolver;
++    MemoryManager*              fMemoryManager;
++    ValidationContext           *fValidationContext;
++    XMLErrorReporter*           fErrorReporter;
++    unsigned int                fSchemaNamespaceId;
++    unsigned int                fUIntPoolRow;
++    unsigned int                fXMLNSNamespaceId;
++    unsigned int                fXMLNamespaceId;
++    ReaderMgr                   fReaderMgr;
+     size_t                      fBufferSize;
+-    bool                        fStandardUriConformant;
++    unsigned int **             fUIntPool;
++    XMLUInt32                   fScannerId;
++    unsigned int                fEntityExpansionCount;
++    unsigned int                fEntityExpansionLimit;
++    unsigned int                fUIntPoolCol;
++    unsigned int                fUIntPoolRowTotal;
++    unsigned int                fUnknownNamespaceId;
+     bool                        fCalculateSrcOfs;
++    bool                        fDisableDefaultEntityResolution;
+     bool                        fDoNamespaces;
++    bool                        fDoSchema;
++    bool                        fEntityDeclPoolRetrieved;
+     bool                        fExitOnFirstFatal;
+-    bool                        fValidationConstraintFatal;
+-    bool                        fInException;
+-    bool                        fStandalone;
++    bool                        fGenerateSyntheticAnnotations;
+     bool                        fHasNoDTD;
+-    bool                        fValidate;
+-    bool                        fValidatorFromUser;
+-    bool                        fDoSchema;
+-    bool                        fSchemaFullChecking;
+     bool                        fIdentityConstraintChecking;
+-    bool                        fToCacheGrammar;
+-    bool                        fUseCachedGrammar;
++    bool                        fIgnoreAnnotations;
++    bool                        fIgnoreCachedDTD;
++    bool                        fInException;
+     bool                        fLoadExternalDTD;
+     bool                        fNormalizeData;
+-    bool                        fGenerateSyntheticAnnotations;
+-    bool                        fValidateAnnotations;
+-    bool                        fIgnoreCachedDTD;
+-    bool                        fIgnoreAnnotations;
+-    bool                        fDisableDefaultEntityResolution;
++    bool                        fSchemaFullChecking;
+     bool                        fSkipDTDValidation;
+-    int                         fErrorCount;
+-    unsigned int                fEntityExpansionLimit;
+-    unsigned int                fEntityExpansionCount;
+-    unsigned int                fEmptyNamespaceId;
+-    unsigned int                fUnknownNamespaceId;
+-    unsigned int                fXMLNamespaceId;
+-    unsigned int                fXMLNSNamespaceId;
+-    unsigned int                fSchemaNamespaceId;
+-    unsigned int **             fUIntPool;
+-    unsigned int                fUIntPoolRow;
+-    unsigned int                fUIntPoolCol;
+-    unsigned int                fUIntPoolRowTotal;
+-    XMLUInt32                   fScannerId;
+-    XMLUInt32                   fSequenceId;
+-    RefVectorOf<XMLAttr>*       fAttrList;
+-    RefHash2KeysTableOf<XMLAttr>*  fAttrDupChkRegistry;    
+-    XMLDocumentHandler*         fDocHandler;
++    bool                        fStandalone;
++    bool                        fStandardUriConformant;
++    bool                        fToCacheGrammar;
++    bool                        fUseCachedGrammar;
++    bool                        fValidate;
++    bool                        fValidateAnnotations;
++    bool                        fValidationConstraintFatal;
++    bool                        fValidatorFromUser;
+     DocTypeHandler*             fDocTypeHandler;
+-    XMLEntityHandler*           fEntityHandler;
+-    XMLErrorReporter*           fErrorReporter;
+     ErrorHandler*               fErrorHandler;
+-    PSVIHandler*                fPSVIHandler;
+-    ValidationContext           *fValidationContext;
+-    bool                        fEntityDeclPoolRetrieved;
+-    ReaderMgr                   fReaderMgr;
+-    XMLValidator*               fValidator;
+-    ValSchemes                  fValScheme;
+-    GrammarResolver* const      fGrammarResolver;
+-    MemoryManager* const        fGrammarPoolMemoryManager;
+-    Grammar*                    fGrammar;
+     Grammar*                    fRootGrammar;
+-    XMLStringPool*              fURIStringPool;
++    MemoryManager* const        fGrammarPoolMemoryManager;
++    RefHash2KeysTableOf<XMLAttr>*  fAttrDupChkRegistry;    
+     XMLCh*                      fRootElemName;
+-    XMLCh*                      fExternalSchemaLocation;
+-    XMLCh*                      fExternalNoNamespaceSchemaLocation;
++    XMLEntityHandler*           fEntityHandler;
++    ValSchemes                  fValScheme;
++    XMLUInt32                   fSequenceId;
+     SecurityManager*            fSecurityManager;
++    XMLCh*                      fExternalNoNamespaceSchemaLocation;
++    XMLCh*                      fExternalSchemaLocation;
+     XMLReader::XMLVersion       fXMLVersion;
+-    MemoryManager*              fMemoryManager;
+     XMLBufferMgr                fBufMgr;
+     XMLBuffer                   fAttNameBuf;
+     XMLBuffer                   fAttValueBuf;
 diff --git a/benchspec/CPU/525.x264_r/src/x264_src/common/common.h b/benchspec/CPU/525.x264_r/src/x264_src/common/common.h
 index 6f4696b..2c021b4 100644
 --- a/benchspec/CPU/525.x264_r/src/x264_src/common/common.h
@@ -1430,12 +1653,11 @@ index 741c453..bd7b481 100644
  	uint32_t sons_count;
 -- 
 2.32.0
-
 diff --git a/benchspec/CPU/531.deepsjeng_r/src/state.h b/benchspec/CPU/531.deepsjeng_r/src/state.h
-index c3c01b1..e73ab5e 100644
+index c3c01b1..6a12a03 100644
 --- a/benchspec/CPU/531.deepsjeng_r/src/state.h
 +++ b/benchspec/CPU/531.deepsjeng_r/src/state.h
-@@ -9,28 +9,47 @@
+@@ -9,28 +9,43 @@
      defines
  */
  struct state_t {
@@ -1446,37 +1668,41 @@ index c3c01b1..e73ab5e 100644
 -    BITBOARD All;         
 -    BITBOARD BlackPieces, WhitePieces;
      BITBOARD BitBoard[13];
-+    BITBOARD All;         
+-
 +    BITBOARD hash;
-+    BITBOARD qnodes;
-+    int bking_start;
 +    int ply;
-+    int threadid;    
 +    int white_to_move;
-+    int wking_start;
-+    unsigned int TTColls;   
 +    unsigned int TTHits;
 +    unsigned int TTProbes;
-+    unsigned int TTStores;
- 
-+    BITBOARD BlackPieces;
-+    BITBOARD WhitePieces;
++    BITBOARD All;         
 +    BITBOARD pawnhash;         
      int Material;
++    int bking_start;
 +    int blrook_start;
 +    int brrook_start;        
 +    int ep_square;
 +    int fifty;    
      int psq_score;
++    int threadid;    
 +    int wlrook_start;
 +    int wrrook_start;
-+
++    unsigned int TTColls;   
++    unsigned int TTStores;
++    BITBOARD BlackPieces;
++    BITBOARD WhitePieces;
++    BITBOARD qnodes;
++    int wking_start;
 +    int sboard[64];
-+
      int npieces[13];
 +    int bking_loc;
      int castleflag;
 +    int wking_loc;
++    BITBOARD hash_history[GAME_LENGTH];  
++    BITBOARD nodes;
++    int checks[PV_BUFF];       
++    int    plyeval[PV_BUFF];    
++    move_s path[PV_BUFF];
++    int maxply;
  
 -    int ep_square, white_to_move, wking_loc, bking_loc;
 -    int ply, fifty;    
@@ -1484,20 +1710,13 @@ index c3c01b1..e73ab5e 100644
 -    BITBOARD hash;
 -    BITBOARD pawnhash;         
 -    
--    move_x path_x[PV_BUFF];
+     move_x path_x[PV_BUFF];
 -    move_s path[PV_BUFF];
-+    BITBOARD hash_history[GAME_LENGTH];  
-+    BITBOARD nodes;
-+    int checks[PV_BUFF];       
-     int    plyeval[PV_BUFF];    
-+    move_s path[PV_BUFF];
-+    int maxply;
-+
-+    move_x path_x[PV_BUFF];
+-    int    plyeval[PV_BUFF];    
  
      /* search state */
      struct {
-@@ -39,34 +58,6 @@ struct state_t {
+@@ -39,34 +54,6 @@ struct state_t {
          move_s killer3;
          move_s killer4;
      } killerstack[PV_BUFF];
@@ -1579,41 +1798,3 @@ index cd9f91b..ba6c8fa 100644
          
      int count_neighbours(const int color, const int i);   
      void merge_strings(const int ip, const int aip);    
-diff --git a/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h b/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
-index 81810f9..98331ed 100644
---- a/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
-+++ b/benchspec/CPU/520.omnetpp_r/src/simulator/cmessage.h
-@@ -112,27 +112,25 @@ class SIM_API cMessage : public cOwnedObject
-     friend class cMessageHeap;
- 
-   private:
--    // note: fields are in an order that maximizes packing (minimizes sizeof(cMessage))
-+    int heapindex;             // used by cMessageHeap (-1 if not on heap)
-+    int frommod, fromgate;     // source module and gate IDs -- set internally
-+    int tomod, togate;         // dest. module and gate IDs -- set internally
-     short msgkind;             // message kind -- 0>= user-defined meaning, <0 reserved
-     short prior;               // priority -- used for scheduling msgs with equal times
-     short srcprocid;           // reserved for use by parallel execution: id of source partition
-+
-     cArray *parlistp;          // ptr to list of parameters
-     cObject *ctrlp;            // ptr to "control info"
-     void *contextptr;          // a stored pointer -- user-defined meaning, used with self-messages
--
--    int frommod, fromgate;     // source module and gate IDs -- set internally
--    int tomod, togate;         // dest. module and gate IDs -- set internally
-+    eventnumber_t prev_event_num; // event number of the sending/scheduling this message
-     simtime_t created;         // creation time -- set be constructor
-     simtime_t sent,delivd;     // time of sending & delivery -- set internally
-     simtime_t tstamp;          // time stamp -- user-defined meaning
- 
--    int heapindex;             // used by cMessageHeap (-1 if not on heap)
-     unsigned long insertordr;  // used by cMessageHeap
--
--    eventnumber_t prev_event_num; // event number of the sending/scheduling this message
--
-     long msgid;                // a unique message identifier assigned upon message creation
-     long msgtreeid;            // a message identifier that is inherited by dup, if non dupped it is msgid
-+
-     static long next_id;       // the next unique message identifier to be assigned upon message creation
- 
-     // global variables for statistics
