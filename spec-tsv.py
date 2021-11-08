@@ -33,6 +33,8 @@ def fill_times(data, paths):
 
 
 def fill_pmc(data, paths):
+    partial = defaultdict(list)
+
     for path in paths:
         with open(path, "r", newline="") as f:
             for line in f.readlines():
@@ -41,7 +43,10 @@ def fill_pmc(data, paths):
                     continue
                 counter = chunks[1]
                 if counter in COUNTERS:
-                    data[counter].append(int(chunks[0]))
+                    partial[counter].append(int(chunks[0]))
+
+    for counter, values in partial.items():
+        data[counter].append(sum(values))
 
 
 DATA = {
@@ -67,42 +72,60 @@ for tune in DATA.keys():
 
         for benchmark in part.keys():
             benchmarks.add(benchmark)
-            fill_pmc(part[benchmark], path.glob(f"*/pmc/{benchmark}/*.err"))
+            for run in path.glob("*/"):
+                fill_pmc(part[benchmark], run.glob(f"pmc/{benchmark}/*.err"))
 
-ROWS = [
-    ["", "Before"] + ([""] * 9) + ["After"] + ([""] * 9) + ["Improvement"] + ([""] * 9),
-    [""] + (["Base"] + ([""] * 4) + ["Peak"] + ([""] * 4)) * 3,
-    [""] + (["Time", "IPC", "L1 miss rate", "L2 miss rate", "L3 miss rate"] * 6)
+
+MEDIANS = [
+    ["", "Before"] + ([""] * 9) + ["After"] + ([""] * 9),
+    [""] + (["Base"] + ([""] * 4) + ["Peak"] + ([""] * 4)) * 2,
+    [""] + (["Time", "IPC", "L1 miss rate", "L2 miss rate", "L3 miss rate"] * 4),
+]
+
+VARIANCES = [
+    [],
+    ["", "Variance (PTP)"],
 ]
 
 for benchmark in sorted(benchmarks):
-    row = [benchmark]
+    median = [benchmark]
+    variance = [benchmark]
+
     for exp in ["baseline", "patched"]:
         for tune in ["base", "peak"]:
             part = DATA[tune][exp][benchmark]
 
             time = part["time"]
             if time:
-                row.append(np.median(time))
+                median.append(np.median(time))
+                variance.append(np.ptp(time))
             else:
-                row.append("")
+                median.append("")
+                variance.append("")
 
             insts = np.array(part["instructions"])
             cycles = np.array(part["cycles"])
-            if len(insts) and len(cycles):
-                row.append(np.median(insts / cycles))
+            ipc = insts / cycles
+            if len(ipc):
+                median.append(np.median(ipc))
+                variance.append(np.ptp(ipc))
             else:
-                row.append("")
+                median.append("")
+                variance.append("")
 
             for level in range(1, 4):
                 hit = np.array(part[f"mem_load_retired.l{level}_hit"])
                 miss = np.array(part[f"mem_load_retired.l{level}_miss"])
-                if len(hit) and len(miss):
-                    row.append(np.median(miss / (miss + hit)))
+                rate = miss / (hit + miss)
+                if len(rate):
+                    median.append(np.median(rate))
+                    variance.append(np.ptp(rate))
                 else:
-                    row.append("")
+                    median.append("")
+                    variance.append("")
 
-    ROWS.append(row)
+    MEDIANS.append(median)
+    VARIANCES.append(variance)
 
 writer = csv.writer(sys.stdout, delimiter='\t')
-writer.writerows(ROWS)
+writer.writerows(MEDIANS + VARIANCES)
