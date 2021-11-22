@@ -43,35 +43,27 @@ save-result() {
     mv "$1/result" "$2"
 }
 
-save-pmc() {
-    find "$1" -name '*.err' -type f -exec grep -lF mem_load_retired {} + | while read file; do
-        benchmark=${file%/run/*}
-        benchmark=${benchmark##*/}
-        base=${file##*/}
-        mkdir -p "$2/$benchmark"
-        mv "$file" "$2/$benchmark/$base"
-    done
-}
-
 spec-run() {
-    for i in $(seq $ITERATIONS); do
-        printf "========\nIteration %d\n========\n\n" $i
+    ROOT="$PWD"
+
+    for iter in $(seq $ITERATIONS); do
+        printf "========\nIteration %d\n========\n\n" $iter
 
         (
             cd "$1"
             . ./shrc
+            export BCPI_PMC_DIR="$ROOT/cpu2017-results/$1/base/$iter/pmc"
             runcpu --config=spec-bcpi --copies=$COPIES --iterations=1 --nobuild --tune=base $BENCHSET
         )
-        save-pmc "$1" "./cpu2017-results/$1/base/$i/pmc"
-        save-result "$1" "./cpu2017-results/$1/base/$i/result"
+        save-result "$1" "./cpu2017-results/$1/base/$iter/result"
 
         (
             cd "$1"
             . ./shrc
+            export BCPI_PMC_DIR="$ROOT/cpu2017-results/$1/peak/$iter/pmc"
             runcpu --config=spec-bcpi --copies=$COPIES --iterations=1 --nobuild --tune=peak $BENCHSET
         )
-        save-pmc "$1" "./cpu2017-results/$1/peak/$i/pmc"
-        save-result "$1" "./cpu2017-results/$1/peak/$i/result"
+        save-result "$1" "./cpu2017-results/$1/peak/$iter/result"
     done
 }
 

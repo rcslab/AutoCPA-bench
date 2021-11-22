@@ -73,7 +73,7 @@ for tune in DATA.keys():
         for benchmark in part.keys():
             benchmarks.add(benchmark)
             for run in path.glob("*/"):
-                fill_pmc(part[benchmark], run.glob(f"pmc/{benchmark}/*.err"))
+                fill_pmc(part[benchmark], run.glob(f"pmc/{benchmark}/pmc.*"))
 
 
 MEDIANS = [
