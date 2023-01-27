@@ -17,14 +17,28 @@ if ! [ -d "$SPEC_INST/tools/bin/freebsd-x86_64" ]; then
     (
         cd "$SPEC_INST"
         tar xf install_archives/tools-src.tar
-        BUILDTOOLS_KEEP_GOING=1 ./tools/src/buildtools
-        packagetools freebsd-x86_64
+        export SKIPTOOLSINTRO=1
+        export BUILDTOOLS_KEEP_GOING=1
+        export MAKEFLAGS="-j$(sysctl -n hw.ncpu)"
+        export CFLAGS="-fcommon"
+        export SPEC="$PWD"
+        ./tools/src/buildtools
+        ./bin/packagetools freebsd-x86_64
     )
 fi
 
 rm -rf ./cpu2017-baseline ./cpu2017-patched
 
-~/cpu2017-inst/install.sh -d "$PWD/cpu2017-baseline" -u freebsd-x86_64 -f
+(
+    # The Perl test op/magic.t fails due to hardcoding "perl" rather than
+    # "specperl", but we can skip it by making ps fail
+    TMP=$(mktemp -d)
+    ln -s "$(which false)" "$TMP/ps"
+    export PATH="$TMP:$PATH"
+    "$SPEC_INST/install.sh" -d "$PWD/cpu2017-baseline" -u freebsd-x86_64 -f
+    rm -r "$TMP"
+)
+
 cp ./spec-bcpi.cfg ./cpu2017-baseline/config/
 
 cp -r ./cpu2017-baseline ./cpu2017-patched
