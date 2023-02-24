@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Copyright © Tavian Barnes <tavianator@tavianator.com>
+# SPDX-License-Identifier: 0BSD
+
+# Exit early on errors (-e) and undefined variables (-u)
+set -eu
+
+# Get the directory that contains this script
+_TOP=$(dirname -- "$0")
+
+# Load the implementation
+source "$_TOP/util.sh"
+source "$_TOP/platform.sh"
+source "$_TOP/results.sh"
+source "$_TOP/run.sh"
+source "$_TOP/getopts.sh"
